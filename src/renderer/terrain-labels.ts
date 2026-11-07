@@ -79,11 +79,34 @@ const PEAK_MARK_HALF = 5; // 山の頂の印 (▲) の幅の半分 (px)。印の
 
 type TerrainKind = 'region' | 'peak' | 'river' | 'lake';
 
+// 川の線。coords は [lon, lat, ...] (経度は続けたもの)、progress は各点の源流からの距離 (0〜1)
+export interface RiverLine {
+  coords: number[];
+  progress: number[];
+}
+
+// 川の線ごとに、各点の源流からの距離 (0〜1) を求める (ツアーのハイライトの川と同じ式)。
+// 線の先頭の値 (源流からの距離 km) に、線に沿った長さを足し、川全体の長さで割る
+function riverLines(river: RiverRecord): RiverLine[] {
+  return river.l.map((line) => {
+    const coords = unwrapLongitudes(line.slice(1));
+    const along = [0];
+    for (let i = 2; i + 1 < coords.length; i += 2) {
+      const midLat = ((coords[i + 1] + coords[i - 1]) / 2) * (Math.PI / 180);
+      along.push(along[along.length - 1] + Math.hypot((coords[i] - coords[i - 2]) * Math.cos(midLat), coords[i + 1] - coords[i - 1]) * 111.2);
+    }
+    const progress = along.map((km) => Math.min(1, (line[0] + km) / Math.max(river.L, 1)));
+    return { coords, progress };
+  });
+}
+
 interface TerrainLabel {
   rank: number;
   kind: TerrainKind;
   peak: boolean;
   candidates: THREE.Vector3[] | null; // 川の名前を置く候補の点。範囲、湖、山の頂は null
+  lines: RiverLine[] | null; // 川の線 (クリックしたときに描く)。川のほかは null
+  key: string; // 名前 (川の下見の線を区別する)
   current: number; // 川の名前を今置いている候補 (-1 は置いていない)
   element: HTMLElement;
   world: THREE.Vector3;
@@ -135,21 +158,22 @@ export class TerrainLabels {
     }
     // 川。区間ごとに英語名が分かれている川 (Rhine と Rhein など) は、同じ日本語名で 1 つにまとめる
     const riverNames = riverNameModule.default as unknown as Record<string, string>;
-    const riverGroups = new Map<string, { rank: number; lines: number[][] }>();
+    // まとめた区間は、それぞれの区間の源流から伸ばす (区間どうしのつながりは元データにない)
+    const riverGroups = new Map<string, { rank: number; lines: RiverLine[] }>();
     for (const river of riverModule.default as unknown as RiverRecord[]) {
       const ja = riverNames[river.n];
       if (!ja) continue;
       const group = riverGroups.get(ja) ?? { rank: river.r, lines: [] };
       group.rank = Math.min(group.rank, river.r);
-      for (const line of river.l) group.lines.push(unwrapLongitudes(line.slice(1)));
+      group.lines.push(...riverLines(river));
       riverGroups.set(ja, group);
     }
     for (const [ja, group] of riverGroups) {
-      const total = group.lines.reduce((sum, line) => sum + line.length / 2, 0);
+      const total = group.lines.reduce((sum, line) => sum + line.coords.length / 2, 0);
       const stride = Math.max(1, Math.floor(total / RIVER_CANDIDATES));
       const candidates: THREE.Vector3[] = [];
-      for (const line of group.lines) {
-        for (let i = 0; i + 1 < line.length; i += stride * 2) candidates.push(lonLatToVector3(line[i], line[i + 1], this.radius));
+      for (const { coords } of group.lines) {
+        for (let i = 0; i + 1 < coords.length; i += stride * 2) candidates.push(lonLatToVector3(coords[i], coords[i + 1], this.radius));
       }
       if (candidates.length === 0) continue;
       const element = document.createElement('span');
@@ -157,6 +181,8 @@ export class TerrainLabels {
       element.textContent = ja;
       const label = this.makeLabel(element, 0, 0, group.rank, 'river');
       label.candidates = candidates;
+      label.lines = group.lines;
+      label.key = ja;
       labels.push(label);
     }
     for (const lake of lakeModule.default as unknown as LakeRecord[]) {
@@ -192,6 +218,8 @@ export class TerrainLabels {
       kind,
       peak: kind === 'peak',
       candidates: null,
+      lines: null,
+      key: '',
       current: -1,
       element,
       world: lonLatToVector3(lon, lat, this.radius),
@@ -229,6 +257,22 @@ export class TerrainLabels {
     if (current && (!best || best.distance > current.distance * RIVER_KEEP_RATIO)) return current;
     label.current = chosen;
     return best;
+  }
+
+  // 画面の点 (x, y) にある、出ている川の名前。マウスを乗せた川の線を描くのに使う。名前の少し外側まで反応させる
+  riverAt(x: number, y: number): { key: string; lines: RiverLine[] } | null {
+    if (this.container.hidden) return null;
+    const pad = 4;
+    let found: TerrainLabel | null = null;
+    for (const label of this.labels) {
+      const box = label.box;
+      const hit =
+        label.kind === 'river' && label.shown && box !== null &&
+        x >= box.x - pad && x <= box.x + box.width + pad && y >= box.y - pad && y <= box.y + box.height + pad;
+      if (hit && !found) found = label;
+      label.element.classList.toggle('hover', hit && found === label);
+    }
+    return found ? { key: found.key, lines: found.lines! } : null;
   }
 
   shownBoxes(): LabelBox[] {

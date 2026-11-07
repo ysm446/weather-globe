@@ -1324,6 +1324,40 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     if (cruiseBank && turnRate !== 0) camera.rotateZ((-turnRate / TURN_DEGREES_PER_SECOND) * BANK_DEGREES * THREE.MathUtils.DEG2RAD);
   }
 
+  // 地形の名前の川をクリックすると、その川の線を描く。もう一度クリックするか、ほかの所をクリックするか、Esc で消す。
+  // 名前はマウスを素通りさせ (ドラッグを妨げない)、マウスの位置が名前の範囲に入っているかを確かめる。
+  // マウスを乗せている間は名前を明るくし、カーソルを指の形にする。押してから離すまでに動いたものはクリックとしない
+  const RIVER_CLICK_SLOP_PX = 5;
+  const hoverPointer = { x: -1, y: -1, inside: false, pressed: false };
+  let riverPress: { x: number; y: number } | null = null;
+  let selectedRiver: ReturnType<typeof terrainLabels.riverAt> = null;
+  renderer.domElement.addEventListener('pointermove', (event) => {
+    hoverPointer.x = event.clientX;
+    hoverPointer.y = event.clientY;
+    hoverPointer.inside = true;
+    hoverPointer.pressed = event.buttons !== 0;
+  });
+  renderer.domElement.addEventListener('pointerleave', () => {
+    hoverPointer.inside = false;
+  });
+  renderer.domElement.addEventListener('pointerdown', (event) => {
+    riverPress = event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
+  });
+  renderer.domElement.addEventListener('pointerup', (event) => {
+    const press = riverPress;
+    riverPress = null;
+    if (!press || event.button !== 0) return;
+    if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > RIVER_CLICK_SLOP_PX) return;
+    const hit = terrainLabels.riverAt(event.clientX, event.clientY);
+    selectedRiver = hit && hit.key !== selectedRiver?.key ? hit : null;
+    highlights.setPreview(selectedRiver?.key ?? null, selectedRiver?.lines);
+  });
+  window.addEventListener('keydown', (event) => {
+    if (event.code !== 'Escape' || !selectedRiver) return;
+    selectedRiver = null;
+    highlights.setPreview(null);
+  });
+
   renderer.domElement.addEventListener('pointerdown', (event) => {
     flight = null;
     if (!regionView || regionFlight?.leaving) return;
@@ -1674,6 +1708,9 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     const cityBoxes = cityLabels.shownBoxes();
     countryLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes], apparentAltitude(), highlights.activeCountries());
     terrainLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes, ...countryLabels.shownBoxes()], apparentAltitude());
+    const hoveredRiver = hoverPointer.inside && !hoverPointer.pressed ? terrainLabels.riverAt(hoverPointer.x, hoverPointer.y) : null;
+    const cursor = hoveredRiver ? 'pointer' : '';
+    if (renderer.domElement.style.cursor !== cursor) renderer.domElement.style.cursor = cursor;
   }
 
   window.addEventListener('resize', () => {
