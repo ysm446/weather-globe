@@ -682,9 +682,23 @@ interface Item {
 
 const easeInOut = (t: number): number => t * t * (3 - 2 * t);
 
+const PREVIEW_FADE_IN_SECONDS = 0.25; // 下見の線 (地形の名前の川にマウスを乗せたとき) の現れ方と消え方
+const PREVIEW_FADE_OUT_SECONDS = 0.35;
+
+// 下見の線。ツアーのハイライトとは別に持ち、ツアーの線を消さない
+interface Preview {
+  key: string;
+  group: THREE.Group;
+  material: THREE.ShaderMaterial;
+  clock: number;
+  fade: number;
+  leaving: boolean;
+}
+
 export class Highlights {
   readonly group = new THREE.Group();
   private items: Item[] = [];
+  private previews: Preview[] = [];
   private rivers: Promise<RiverRecord[]> | null = null;
   private regions: Promise<RegionRecord[]> | null = null;
   private points: Promise<PointRecord[]> | null = null;
@@ -750,6 +764,20 @@ export class Highlights {
   // 国名を出している国。設定の「国名を表示」の国名と二重にしないために使う
   activeCountries(): Set<string> {
     return new Set(this.items.filter((item) => !item.leaving).flatMap((item) => item.countryCodes));
+  }
+
+  // 下見の線を出す (地形の名前の川をクリックしたとき)。ツアーの川と同じく、源流から河口へ伸びる光る線で、伸び終えると光が流れる。
+  // key が同じなら何もしない。null で消す。lines の coords は [lon, lat, ...] (経度は続けたもの)、progress は各点の源流からの距離 (0〜1)
+  setPreview(key: string | null, lines: { coords: number[]; progress: number[] }[] = []): void {
+    const current = this.previews.find((preview) => !preview.leaving);
+    if (current?.key === key) return;
+    if (current) current.leaving = true;
+    if (key === null || lines.length === 0) return;
+    const material = ribbonMaterial(new THREE.Color(HIGHLIGHT_PALETTE.sky).multiplyScalar(RIVER_GLOW), RIVER_WIDTH_PX, RIVER_HEAD, false, 1);
+    const group = new THREE.Group();
+    group.add(new THREE.Mesh(buildRibbon(lines), material));
+    this.group.add(group);
+    this.previews.push({ key, group, material, clock: 0, fade: 0, leaving: false });
   }
 
   // 示しているものをすべて、ふわっと消す
@@ -1072,6 +1100,27 @@ export class Highlights {
       item.labelOpacity = visible ? opacity : 0;
       item.labelReveal = easeInOut(Math.min(1, item.clock / item.revealSeconds));
     }
+    for (const preview of this.previews) {
+      preview.fade = preview.leaving
+        ? Math.max(0, preview.fade - dt / PREVIEW_FADE_OUT_SECONDS)
+        : Math.min(1, preview.fade + dt / PREVIEW_FADE_IN_SECONDS);
+      preview.clock += dt;
+      const u = preview.material.uniforms;
+      u.uOpacity.value = easeInOut(preview.fade);
+      u.uReveal.value = easeInOut(Math.min(1, preview.clock / RIVER_REVEAL_SECONDS)) * 1.0001;
+      u.uTime.value = preview.clock;
+      u.uResolution.value.copy(this.resolution);
+    }
+    for (const preview of this.previews.filter((p) => p.leaving && p.fade <= 0)) {
+      this.group.remove(preview.group);
+      preview.group.traverse((object) => {
+        if (object instanceof THREE.Mesh) {
+          object.geometry.dispose();
+          (object.material as THREE.Material).dispose();
+        }
+      });
+    }
+    this.previews = this.previews.filter((p) => !(p.leaving && p.fade <= 0));
     // 消えきったものを片付ける
     for (const item of this.items.filter((i) => i.leaving && i.fade <= 0)) {
       this.group.remove(item.group);

@@ -357,6 +357,11 @@ button.city-label:active {
   letter-spacing: 0.15em;
 }
 
+/* マウスを乗せた川の名前。線と一緒に明るくする */
+.terrain-label.river.hover {
+  color: #d6ecff;
+}
+
 /* 山の頂。印の中心を頂の位置に合わせる (terrain-labels.ts の PEAK_MARK_HALF) */
 .terrain-label.peak {
   color: rgba(255, 255, 255, 0.85);
