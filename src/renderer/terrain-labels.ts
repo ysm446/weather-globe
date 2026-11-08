@@ -1,7 +1,7 @@
 // 地球儀の上に出す地形の名前 (山脈、砂漠、高原、平野、盆地など)、川、湖と山の頂。設定の「地形の名前を表示」で出す。
 // データはツアーのハイライトと同じ Natural Earth (highlight-data.ts)。引いているときは大きな地形だけ、寄るほど小さな地形まで出す。
 // 川は日本語名の対応表 (data/river-names-ja.json。アプリで追加した名前) にあるものだけを出し、名前は線の上で画面の中心に近い所に置く。
-// 湖は Natural Earth の日本語名 (scripts/build-lakes.mjs で絞ったもの) を、湖の内側の奥まった点に置く。
+// 湖は Natural Earth の日本語名 (scripts/build-lakes.mjs で絞ったもの) を、湖の内側の奥まった点に置く。クリックすると湖の形を描く。
 // 山の頂は寄ったときだけ、印と標高を付けて出す。都市名、国名、地点のマーカーには重ねない
 import * as THREE from 'three';
 import type { WorldToScreen } from './city-labels';
@@ -65,6 +65,7 @@ interface LakeRecord {
   x: number;
   y: number;
   a: number; // 面積 (km²。おおよそ)
+  w?: string; // Wikidata の ID (詳しい情報は data/lake-info.json)
 }
 
 // 山の頂。-1 は出さない
@@ -105,8 +106,8 @@ interface TerrainLabel {
   kind: TerrainKind;
   peak: boolean;
   candidates: THREE.Vector3[] | null; // 川の名前を置く候補の点。範囲、湖、山の頂は null
-  lines: RiverLine[] | null; // 川の線 (クリックしたときに描く)。川のほかは null
-  key: string; // 名前 (川の下見の線を区別する)
+  lines: RiverLine[] | null; // 川の線 (クリックしたときに描く)。川のほかは null (湖の形は lakeShape で引く)
+  key: string; // 名前 (川の下見の線と湖の形を区別する)
   current: number; // 川の名前を今置いている候補 (-1 は置いていない)
   element: HTMLElement;
   world: THREE.Vector3;
@@ -121,9 +122,15 @@ function rankAt(table: [number, number][], altitude: number): number {
   return (table.find(([min]) => altitude >= min) ?? table[table.length - 1])[1];
 }
 
+// マウスの下にある名前。川は線、湖は形をあとで引く (lakeShape)
+export type TerrainPick =
+  | { kind: 'river'; key: string; lines: RiverLine[]; box: LabelBox }
+  | { kind: 'lake'; key: string; box: LabelBox };
+
 export class TerrainLabels {
   private labels: TerrainLabel[] = [];
   private loading: Promise<void> | null = null;
+  private lakeShapes: Promise<Record<string, number[][][]>> | null = null;
 
   constructor(
     private readonly container: HTMLElement,
@@ -189,7 +196,9 @@ export class TerrainLabels {
       const element = document.createElement('span');
       element.className = `terrain-label lake ${lake.r <= 1 ? 'rank-2' : lake.r <= 4 ? 'rank-3' : ''} off`;
       element.textContent = lake.ja;
-      labels.push(this.makeLabel(element, lake.x, lake.y, lake.r, 'lake'));
+      const label = this.makeLabel(element, lake.x, lake.y, lake.r, 'lake');
+      label.key = lake.ja;
+      labels.push(label);
     }
     for (const peak of peaks) {
       const element = document.createElement('span');
@@ -259,20 +268,32 @@ export class TerrainLabels {
     return best;
   }
 
-  // 画面の点 (x, y) にある、出ている川の名前。マウスを乗せた川の線を描くのに使う。名前の少し外側まで反応させる
-  riverAt(x: number, y: number): { key: string; lines: RiverLine[]; box: LabelBox } | null {
+  // 画面の点 (x, y) にある、出ている川か湖の名前。マウスを乗せた名前を明るくし、クリックで川の線や湖の形を描くのに使う。
+  // 名前の少し外側まで反応させる
+  pickAt(x: number, y: number): TerrainPick | null {
     if (this.container.hidden) return null;
     const pad = 4;
     let found: TerrainLabel | null = null;
     for (const label of this.labels) {
       const box = label.box;
       const hit =
-        label.kind === 'river' && label.shown && box !== null &&
+        (label.kind === 'river' || label.kind === 'lake') && label.shown && box !== null &&
         x >= box.x - pad && x <= box.x + box.width + pad && y >= box.y - pad && y <= box.y + box.height + pad;
       if (hit && !found) found = label;
       label.element.classList.toggle('hover', hit && found === label);
     }
-    return found ? { key: found.key, lines: found.lines!, box: found.box! } : null;
+    if (!found) return null;
+    return found.kind === 'river'
+      ? { kind: 'river', key: found.key, lines: found.lines!, box: found.box! }
+      : { kind: 'lake', key: found.key, box: found.box! };
+  }
+
+  // 湖の形 (輪の並び。輪は平らな [lon, lat, ...])。形のデータは初めて使うときに読み込む
+  async lakeShape(key: string): Promise<number[][][] | null> {
+    this.lakeShapes ??= import('./data/lake-shapes-10m.json').then(
+      (module) => module.default as unknown as Record<string, number[][][]>,
+    );
+    return (await this.lakeShapes)[key] ?? null;
   }
 
   shownBoxes(): LabelBox[] {

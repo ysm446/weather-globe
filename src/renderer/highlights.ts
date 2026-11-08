@@ -534,6 +534,32 @@ function progressAlong(coords: number[]): number[] {
   return out.map((d) => (total > 0 ? d / total : 0));
 }
 
+// 範囲の塗り。輪郭のすぐ内側が濃く、内側ほど薄い
+function areaFill(polygons: number[][][], color: THREE.Color): { mesh: THREE.Mesh; material: THREE.ShaderMaterial } {
+  const material = new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: color }, uOpacity: { value: 0 }, uWidth: { value: 1 }, uSpread: { value: 0 } },
+    vertexShader: FILL_VS,
+    fragmentShader: FILL_FS,
+    transparent: true,
+    // 点を間引いた輪郭がわずかに交差すると三角形が重なり、半透明が何重にも足されて明るい四角が出た。
+    // 塗りはどこも同じ高さなので、奥行きを書き込み、同じ深さの 2 枚目以降は描かない (Less で同じ深さは通らない)
+    depthWrite: true,
+    depthFunc: THREE.LessDepth,
+    side: THREE.DoubleSide,
+  });
+  const built = buildFill(polygons);
+  material.uniforms.uWidth.value = built.width;
+  return { mesh: new THREE.Mesh(built.geometry, material), material };
+}
+
+// 範囲の輪郭の線。各輪を 1 周で 0〜1 に進める
+function outlineRings(polygons: number[][][]): { coords: number[]; progress: number[] }[] {
+  return polygons.flat().map((ring) => {
+    const coords = unwrapLongitudes(ring);
+    return { coords, progress: progressAlong(coords) };
+  });
+}
+
 // 多角形 (輪の並び。1 つ目が外周) を三角形に分け、地表に沿うように細かくして球に貼る
 // 頂点ごとに輪郭までの距離 (km) も求め、グラデーションの幅を範囲の大きさから決めて返す
 function buildFill(polygons: number[][][]): { geometry: THREE.BufferGeometry; width: number } {
@@ -685,11 +711,13 @@ const easeInOut = (t: number): number => t * t * (3 - 2 * t);
 const PREVIEW_FADE_IN_SECONDS = 0.25; // 下見の線 (地形の名前の川にマウスを乗せたとき) の現れ方と消え方
 const PREVIEW_FADE_OUT_SECONDS = 0.35;
 
-// 下見の線。ツアーのハイライトとは別に持ち、ツアーの線を消さない
+// 下見の線 (川) と範囲 (湖)。ツアーのハイライトとは別に持ち、ツアーの線を消さない
 interface Preview {
   key: string;
   group: THREE.Group;
   material: THREE.ShaderMaterial;
+  revealSeconds: number; // 線を描き終えるまでの時間
+  fill: THREE.ShaderMaterial | null; // 範囲の塗り。線を描き終えてから縁から内へ広げる
   clock: number;
   fade: number;
   leaving: boolean;
@@ -777,7 +805,23 @@ export class Highlights {
     const group = new THREE.Group();
     group.add(new THREE.Mesh(buildRibbon(lines), material));
     this.group.add(group);
-    this.previews.push({ key, group, material, clock: 0, fade: 0, leaving: false });
+    this.previews.push({ key, group, material, revealSeconds: RIVER_REVEAL_SECONDS, fill: null, clock: 0, fade: 0, leaving: false });
+  }
+
+  // 範囲の下見 (地形の名前の湖をクリックしたとき)。ツアーの範囲と同じく、輪郭を 1 周描いてから内側を縁から塗る。
+  // key が同じなら何もしない。null で消す。polygons は輪の並び (1 つ目が外周、輪は平らな [lon, lat, ...])
+  setAreaPreview(key: string | null, polygons: number[][][] = [], color: string = HIGHLIGHT_PALETTE.sky): void {
+    const current = this.previews.find((preview) => !preview.leaving);
+    if (current?.key === key) return;
+    if (current) current.leaving = true;
+    if (key === null || polygons.length === 0) return;
+    const base = new THREE.Color(color);
+    const material = ribbonMaterial(base.clone().multiplyScalar(LINE_GLOW), OUTLINE_WIDTH_PX, 0.6, false, 2);
+    const fill = areaFill(polygons, base);
+    const group = new THREE.Group();
+    group.add(fill.mesh, new THREE.Mesh(buildRibbon(outlineRings(polygons)), material));
+    this.group.add(group);
+    this.previews.push({ key, group, material, revealSeconds: OUTLINE_REVEAL_SECONDS, fill: fill.material, clock: 0, fade: 0, leaving: false });
   }
 
   // 示しているものをすべて、ふわっと消す
@@ -918,26 +962,10 @@ export class Highlights {
       return material;
     };
     const addArea = (polygons: number[][][]): void => {
-      const fill = new THREE.ShaderMaterial({
-        uniforms: { uColor: { value: areaColor }, uOpacity: { value: 0 }, uWidth: { value: 1 }, uSpread: { value: 0 } },
-        vertexShader: FILL_VS,
-        fragmentShader: FILL_FS,
-        transparent: true,
-        // 点を間引いた輪郭がわずかに交差すると三角形が重なり、半透明が何重にも足されて明るい四角が出た。
-        // 塗りはどこも同じ高さなので、奥行きを書き込み、同じ深さの 2 枚目以降は描かない (Less で同じ深さは通らない)
-        depthWrite: true,
-        depthFunc: THREE.LessDepth,
-        side: THREE.DoubleSide,
-      });
-      const built = buildFill(polygons);
-      fill.uniforms.uWidth.value = built.width;
-      item.group.add(new THREE.Mesh(built.geometry, fill));
-      item.fill = fill;
-      const rings = polygons.flat().map((ring) => {
-        const coords = unwrapLongitudes(ring);
-        return { coords, progress: progressAlong(coords) };
-      });
-      addRibbon(rings, areaLineColor, OUTLINE_WIDTH_PX, OUTLINE_REVEAL_SECONDS, 0.6, false, 'twinkle');
+      const { mesh, material } = areaFill(polygons, areaColor);
+      item.group.add(mesh);
+      item.fill = material;
+      addRibbon(outlineRings(polygons), areaLineColor, OUTLINE_WIDTH_PX, OUTLINE_REVEAL_SECONDS, 0.6, false, 'twinkle');
     };
     const flatOf = (points: [number, number][]): number[] => points.flatMap(([lat, lon]) => [lon, lat]);
 
@@ -1107,9 +1135,15 @@ export class Highlights {
       preview.clock += dt;
       const u = preview.material.uniforms;
       u.uOpacity.value = easeInOut(preview.fade);
-      u.uReveal.value = easeInOut(Math.min(1, preview.clock / RIVER_REVEAL_SECONDS)) * 1.0001;
+      u.uReveal.value = easeInOut(Math.min(1, preview.clock / preview.revealSeconds)) * 1.0001;
       u.uTime.value = preview.clock;
       u.uResolution.value.copy(this.resolution);
+      if (preview.fill) {
+        preview.fill.uniforms.uOpacity.value = easeInOut(preview.fade) * AREA_FILL_OPACITY;
+        preview.fill.uniforms.uSpread.value = easeInOut(
+          THREE.MathUtils.clamp((preview.clock - preview.revealSeconds) / AREA_SPREAD_SECONDS, 0, 1),
+        );
+      }
     }
     for (const preview of this.previews.filter((p) => p.leaving && p.fade <= 0)) {
       this.group.remove(preview.group);

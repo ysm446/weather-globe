@@ -6,13 +6,11 @@
 // 数値と国は Wikidata (CC0)、説明は Wikipedia (CC BY-SA 4.0) の記事の冒頭。ネットにつなぐのはこのスクリプトだけで、アプリは出力を読むだけ
 import fs from 'node:fs';
 import path from 'node:path';
+import { fetchArticles, fetchEnglishQids, fetchEntities, itemIds, label, quantity, round, summarize, UNIT } from './wiki.mjs';
 
 const repoRoot = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 const dataDir = path.join(repoRoot, 'src', 'renderer', 'data');
 const outFile = path.join(dataDir, 'river-info.json');
-
-const USER_AGENT = 'weather-globe-build/0.1 (build script; https://github.com/ysm446/tiny-earth)';
-const SUMMARY_MAX = 140; // 説明の最大の文字数。超えるときは文の切れ目で切る
 
 // 日本語名 → 日本語版 Wikipedia の記事名。日本語名のままでは別の記事になるもの
 const TITLE_OVERRIDES = {};
@@ -35,149 +33,11 @@ const EN_TITLE_OVERRIDES = {
   黒ヴォルタ川: 'Black Volta', // 日本語版はヴォルタ川 (本流) へ転送される
 };
 
-async function getJson(url) {
-  for (let attempt = 0; ; attempt++) {
-    const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
-    if (response.ok) return response.json();
-    if (attempt >= 3 || (response.status !== 429 && response.status < 500)) {
-      throw new Error(`${response.status} ${url}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
-  }
-}
-
-function chunks(items, size) {
-  const out = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
-// 記事名 → { title, qid, extract, disambiguation }。転送ページは転送先をたどる
-async function fetchArticles(titles) {
-  const result = new Map();
-  // 冒頭の抜き出し (extracts) は 1 回に 20 件まで
-  for (const batch of chunks(titles, 20)) {
-    const params = new URLSearchParams({
-      action: 'query',
-      format: 'json',
-      formatversion: '2',
-      redirects: '1',
-      prop: 'pageprops|extracts',
-      ppprop: 'wikibase_item|disambiguation',
-      exintro: '1',
-      explaintext: '1',
-      exlimit: '20',
-      titles: batch.join('|'),
-    });
-    const data = await getJson(`https://ja.wikipedia.org/w/api.php?${params}`);
-    // 引いた名前 → 正規化と転送を経た記事名
-    const resolved = new Map(batch.map((title) => [title, title]));
-    for (const { from, to } of data.query.normalized ?? []) {
-      for (const [key, value] of resolved) if (value === from) resolved.set(key, to);
-    }
-    for (const { from, to } of data.query.redirects ?? []) {
-      for (const [key, value] of resolved) if (value === from) resolved.set(key, to);
-    }
-    const pages = new Map(data.query.pages.map((page) => [page.title, page]));
-    for (const [asked, title] of resolved) {
-      const page = pages.get(title);
-      if (!page || page.missing) continue;
-      result.set(asked, {
-        title: page.title,
-        qid: page.pageprops?.wikibase_item ?? null,
-        extract: page.extract ?? '',
-        disambiguation: page.pageprops?.disambiguation !== undefined,
-      });
-    }
-  }
-  return result;
-}
-
-async function fetchEntities(ids, props = 'claims|labels|sitelinks') {
-  const result = new Map();
-  for (const batch of chunks([...new Set(ids)], 50)) {
-    const params = new URLSearchParams({
-      action: 'wbgetentities',
-      format: 'json',
-      ids: batch.join('|'),
-      props,
-      languages: 'ja|en',
-      sitefilter: 'jawiki',
-    });
-    const data = await getJson(`https://www.wikidata.org/w/api.php?${params}`);
-    for (const [id, entity] of Object.entries(data.entities)) if (!entity.missing) result.set(id, entity);
-  }
-  return result;
-}
-
-// 優先順位の高い (preferred) 値を先に、非推奨 (deprecated) は除いて返す
-function claimsOf(entity, property) {
-  const claims = (entity.claims?.[property] ?? []).filter((claim) => claim.rank !== 'deprecated');
-  const preferred = claims.filter((claim) => claim.rank === 'preferred');
-  return (preferred.length ? preferred : claims).map((claim) => claim.mainsnak).filter((snak) => snak.snaktype === 'value');
-}
-
-const KM = 'http://www.wikidata.org/entity/Q828224';
-const METRE = 'http://www.wikidata.org/entity/Q11573';
-const MILE = 'http://www.wikidata.org/entity/Q253276';
-const KM2 = 'http://www.wikidata.org/entity/Q712226';
-const M3S = 'http://www.wikidata.org/entity/Q794261';
-
-function quantity(entity, property, units) {
-  for (const snak of claimsOf(entity, property)) {
-    const { amount, unit } = snak.datavalue.value;
-    const scale = units[unit];
-    if (scale !== undefined) return Number(amount) * scale;
-  }
-  return null;
-}
-
-function itemIds(entity, property) {
-  return claimsOf(entity, property).map((snak) => snak.datavalue.value.id);
-}
-
-function label(entity) {
-  return entity?.labels?.ja?.value ?? entity?.labels?.en?.value ?? null;
-}
-
-// 記事の冒頭から、読みがなや外国語の表記の括弧を除き、最初の文から SUMMARY_MAX 字に収まるだけの文を残す
-function summarize(extract) {
-  const first = extract.split('\n').find((line) => line.trim()) ?? '';
-  let text = first;
-  // 入れ子の括弧も外側ごと除く
-  for (let previous = ''; previous !== text; ) {
-    previous = text;
-    text = text.replace(/[（(][^（）()]*[）)]/g, '');
-  }
-  text = text.replace(/\s+/g, ' ').replace(/ ?、/g, '、').replace(/ ?。/g, '。').trim();
-  const sentences = text.match(/[^。]+。/g) ?? [text];
-  let out = '';
-  for (const sentence of sentences) {
-    if (out && (out + sentence).length > SUMMARY_MAX) break;
-    out += sentence;
-  }
-  return out.length > SUMMARY_MAX ? `${out.slice(0, SUMMARY_MAX - 1)}…` : out;
-}
-
-const round = (value, step) => (value === null ? null : Math.round(value / step) * step);
-
 const names = JSON.parse(fs.readFileSync(path.join(dataDir, 'river-names-ja.json'), 'utf8'));
 const jaNames = [...new Set(Object.entries(names).filter(([key]) => !key.startsWith('_')).map(([, ja]) => ja))];
 
 // 英語版の記事名から ID を引き、QID_OVERRIDES に足す
-const enTitles = Object.values(EN_TITLE_OVERRIDES);
-const enData = await getJson(
-  `https://en.wikipedia.org/w/api.php?${new URLSearchParams({
-    action: 'query',
-    format: 'json',
-    formatversion: '2',
-    redirects: '1',
-    prop: 'pageprops',
-    ppprop: 'wikibase_item',
-    titles: enTitles.join('|'),
-  })}`,
-);
-const enQids = new Map(enData.query.pages.map((page) => [page.title, page.pageprops?.wikibase_item]));
+const enQids = await fetchEnglishQids(Object.values(EN_TITLE_OVERRIDES));
 for (const [ja, title] of Object.entries(EN_TITLE_OVERRIDES)) {
   const qid = enQids.get(title);
   if (qid) QID_OVERRIDES[ja] = qid;
@@ -227,9 +87,9 @@ for (const ja of jaNames) {
   if (!kinds.some((kind) => WATERCOURSE.has(kind))) problems.push(`${ja}: 川ではないかもしれない (${qid}、P31 ${kinds.join(',')})`);
   const wikiTitle = entity.sitelinks?.jawiki?.title ?? null;
   const article = QID_OVERRIDES[ja] ? overrideArticles.get(wikiTitle) : articles.get(TITLE_OVERRIDES[ja] ?? ja);
-  const length = quantity(entity, 'P2043', { [KM]: 1, [METRE]: 0.001, [MILE]: 1.609344 });
-  const area = quantity(entity, 'P2053', { [KM2]: 1 });
-  const discharge = quantity(entity, 'P2225', { [M3S]: 1 });
+  const length = quantity(entity, 'P2043', { [UNIT.km]: 1, [UNIT.metre]: 0.001, [UNIT.mile]: 1.609344 });
+  const area = quantity(entity, 'P2053', { [UNIT.km2]: 1 });
+  const discharge = quantity(entity, 'P2225', { [UNIT.m3s]: 1 });
   const countries = [...new Set(itemIds(entity, 'P17').map((id) => label(related.get(id))).filter(Boolean))];
   const mouth = itemIds(entity, 'P403').map((id) => label(related.get(id))).find(Boolean) ?? null;
   const record = { qid };
