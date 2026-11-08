@@ -23,6 +23,7 @@ export type WorldToScreen = (world: THREE.Vector3) => { x: number; y: number } |
 export class CityLabels {
   private readonly labels: CityLabel[];
   private excluded: string | null = null;
+  private hoveredLabel: CityLabel | null = null; // マウスを乗せているラベル (詳しい情報の札を出す)
 
   constructor(
     private readonly container: HTMLElement,
@@ -37,10 +38,11 @@ export class CityLabels {
       const dot = document.createElement('span');
       dot.className = 'city-dot';
       element.append(dot, place.name);
-      element.title = `${place.name}の天気を表示`;
+      // 説明は詳しい情報の札 (info-card.ts) に出すので、ツールチップ (title) は付けない
+      element.setAttribute('aria-label', `${place.name}の天気を表示`);
       element.addEventListener('click', () => onSelect(place));
       container.append(element);
-      return {
+      const label: CityLabel = {
         place,
         element,
         world: lonLatToVector3(place.lon, place.lat, radius),
@@ -52,7 +54,20 @@ export class CityLabels {
         shown: false,
         box: null,
       };
+      element.addEventListener('mouseenter', () => (this.hoveredLabel = label));
+      element.addEventListener('mouseleave', () => {
+        if (this.hoveredLabel === label) this.hoveredLabel = null;
+      });
+      return label;
     });
+  }
+
+  // マウスを乗せている都市と、そのラベルの画面上の範囲。隠れているときは null
+  hovered(): { place: MapCity; box: LabelBox } | null {
+    const label = this.hoveredLabel;
+    if (!label || this.container.hidden || !label.shown) return null;
+    const rect = label.element.getBoundingClientRect();
+    return { place: label.place, box: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } };
   }
 
   setVisible(visible: boolean): void {

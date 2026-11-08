@@ -23,7 +23,8 @@ import { HeadingTape, type TapeMarker } from './heading-tape';
 import { stepFade } from './fade';
 import { Highlights, type HighlightSpec } from './highlights';
 import { CountryLabels } from './country-labels';
-import { InfoCard } from './info-card';
+import { samplePoints } from './feature-focus';
+import { InfoCard, type InfoTarget } from './info-card';
 import { TerrainLabels } from './terrain-labels';
 import { TourCaption } from './tour-caption';
 import { TourPlayer, type TourScene } from './tour';
@@ -88,6 +89,7 @@ const EARTH_BORDER_OPACITY = 0.1;
 const REGION_BORDER_OPACITY = 0.25;
 const TOUR_TIME_SECONDS = 2.5; // ツアーで時刻を変えるときに太陽を動かす時間
 const FRAME_SECONDS = 2.5; // ハイライトに合わせてカメラを寄せるときの飛行の時間
+const PEAK_FOCUS_DISTANCE = 0.1; // 山の頂をクリックしたときに寄る距離 (地球の半径が 1。約 640km)。今より遠ざかりはしない
 const SKY_UPDATE_MS = 60_000; // 太陽も星も 1 分で 0.25° しか動かない
 
 const REFERENCE_HZ = 120; // 粒子の移動量と軌跡の長さ、カメラの慣性はこの更新回数を基準に合わせてある
@@ -567,7 +569,7 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
   const countryLabels = new CountryLabels(el('country-labels'), EARTH_SURFACE_RADIUS);
   let terrainLabelsEnabled = false;
   const terrainLabels = new TerrainLabels(el('terrain-labels'), EARTH_SURFACE_RADIUS);
-  const infoCard = new InfoCard(document.body); // 川と湖の名前に乗せたときの詳しい情報
+  const infoCard = new InfoCard(document.body); // 都市、国、地形の名前に乗せたときの詳しい情報
   const cameraPanel = new CameraPanel(camera, GLOBE_RADIUS);
   const scaleBar = new ScaleBar(camera, GLOBE_RADIUS);
   let scaleBarEnabled = true; // 設定の show_scale_bar
@@ -1353,8 +1355,12 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     riverPress = null;
     if (!press || event.button !== 0) return;
     if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > RIVER_CLICK_SLOP_PX) return;
-    const picked = terrainLabels.pickAt(event.clientX, event.clientY);
-    const hit = picked?.kind === 'peak' ? null : picked; // 山の頂は札を出すだけで、クリックでは何も描かない
+    const hit = terrainLabels.pickAt(event.clientX, event.clientY);
+    // 山の頂は描く形がないので、その山へ寄るだけ。描いている川や範囲は消さない
+    if (hit?.kind === 'peak') {
+      focusPeak(hit.lon, hit.lat);
+      return;
+    }
     if (!hit || (hit.kind === selectedFeature?.kind && hit.key === selectedFeature.key)) {
       selectedFeature = null;
       highlights.setPreview(null);
@@ -1363,18 +1369,49 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     const selected = { kind: hit.kind, key: hit.key };
     selectedFeature = selected;
     // 同じ名前の川と湖を区別するため、種類を付けて下見を見分ける
+    // 描いたものの全体が見えるよう、カメラを寄せる
     if (hit.kind === 'river') {
       highlights.setPreview(`river:${hit.key}`, hit.lines);
+      focusFeature(samplePoints(hit.lines.map((line) => line.coords)));
       return;
     }
     if (hit.kind === 'region') {
       highlights.setAreaPreview(`region:${hit.key}`, hit.polygons, hit.color);
+      focusFeature(samplePoints(hit.polygons.map((rings) => rings[0])));
       return;
     }
     void terrainLabels.lakeShape(hit.key).then((shape) => {
-      if (selectedFeature === selected) highlights.setAreaPreview(`lake:${hit.key}`, shape ?? [], LAKE_OUTLINE_COLOR);
+      if (selectedFeature !== selected) return;
+      highlights.setAreaPreview(`lake:${hit.key}`, shape ?? [], LAKE_OUTLINE_COLOR);
+      if (shape) focusFeature(samplePoints(shape.map((rings) => rings[0])));
     });
   });
+
+  // 地形の名前をクリックしたときのカメラの寄せ方。地域ビューの間だけ動かす (地球ビューで動かすと地域ビューへ切り替わり、
+  // 動きが大きすぎる)。方角と傾きは今のまま、場所と距離だけを変える
+  function canFocus(): boolean {
+    return regionView !== null && !regionFlight && mode !== 'wind' && !solar.active && !demoMotion;
+  }
+
+  function flyFocus(to: RegionView): void {
+    if (!regionView) return;
+    stopCruise();
+    const separation = separationDegrees(regionView, to);
+    flyRegion(to, false, FRAME_SECONDS * (1 + separation / 180));
+    if (regionFlight) regionFlight.lift = bookmarkLift(separation);
+  }
+
+  function focusFeature(points: LonLat[]): void {
+    if (!canFocus() || !regionView || points.length === 0) return;
+    flyFocus(
+      frameRegionView(points, { heading: regionView.heading, tilt: regionView.tilt, fovY: camera.fov, aspect: camera.aspect }),
+    );
+  }
+
+  function focusPeak(lon: number, lat: number): void {
+    if (!canFocus() || !regionView) return;
+    flyFocus(clampRegionView({ ...regionView, lon, lat, distance: Math.min(regionView.distance, PEAK_FOCUS_DISTANCE) }));
+  }
   window.addEventListener('keydown', (event) => {
     if (event.code !== 'Escape' || !selectedFeature) return;
     selectedFeature = null;
@@ -1471,13 +1508,17 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
   el('marker-label').addEventListener('click', () => {
     if (selectedCity) onSelectCity(selectedCity);
   });
+  // 選んだ都市の地名に乗せたときも、都市のラベルと同じく詳しい情報の札を出す
+  let markerHovered = false;
+  el('marker-label').addEventListener('mouseenter', () => (markerHovered = true));
+  el('marker-label').addEventListener('mouseleave', () => (markerHovered = false));
 
   function placeMarker(name: string, lat: number, lon: number): void {
     const label = el('marker-label');
     label.textContent = name;
     const selectable = selectedCity?.name === name;
     label.classList.toggle('selectable', selectable);
-    label.title = selectable ? `${name}の天気を表示し、視点を戻す` : '';
+    // 説明は詳しい情報の札に出す (markerHovered)
     lonLatToVector3(lon, lat, EARTH_SURFACE_RADIUS, markerPos);
     marker.hidden = false;
     markerShown = true;
@@ -1715,6 +1756,32 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     headingTape.update(view.heading, markers);
   }
 
+  // 詳しい情報の札を出すもの。都市のラベル (ボタン) と選んだ都市の地名、地形の名前、国名の順に探す
+  function hoverTarget(terrain: ReturnType<typeof terrainLabels.pickAt>): InfoTarget | null {
+    const city = cityLabels.hovered();
+    if (city) {
+      return { kind: 'city', key: city.place.name, name: city.place.name, box: city.box, hint: 'クリックでこの都市の天気を表示' };
+    }
+    const markerLabel = el('marker-label');
+    if (markerHovered && markerShown && selectedCity && markerLabel.classList.contains('selectable')) {
+      const rect = markerLabel.getBoundingClientRect();
+      const box = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+      return { kind: 'city', key: selectedCity.name, name: selectedCity.name, box, hint: 'クリックで視点を戻す' };
+    }
+    if (terrain) {
+      return {
+        kind: terrain.kind,
+        key: terrain.key,
+        name: terrain.name,
+        box: terrain.box,
+        category: terrain.kind === 'region' ? terrain.category : undefined,
+        color: terrain.kind === 'region' ? terrain.color : undefined,
+      };
+    }
+    const country = hoverPointer.inside && !hoverPointer.pressed ? countryLabels.pickAt(hoverPointer.x, hoverPointer.y) : null;
+    return country ? { kind: 'country', key: country.a3, name: country.name, box: country.box } : null;
+  }
+
   function updateMarker(): void {
     const point = markerShown && !solar.active ? toScreen(markerPos) : null;
     if (markerShown) {
@@ -1732,20 +1799,9 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     countryLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes], apparentAltitude(), highlights.activeCountries());
     terrainLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes, ...countryLabels.shownBoxes()], apparentAltitude());
     const hovered = hoverPointer.inside && !hoverPointer.pressed ? terrainLabels.pickAt(hoverPointer.x, hoverPointer.y) : null;
-    infoCard.update(
-      hovered
-        ? {
-            kind: hovered.kind,
-            key: hovered.key,
-            name: hovered.name,
-            box: hovered.box,
-            category: hovered.kind === 'region' ? hovered.category : undefined,
-            color: hovered.kind === 'region' ? hovered.color : undefined,
-          }
-        : null,
-      performance.now(),
-    );
-    const cursor = hovered && hovered.kind !== 'peak' ? 'pointer' : ''; // 山の頂は押しても何も描かない
+    infoCard.update(hoverTarget(hovered), performance.now());
+    // 山の頂は寄れるとき (地域ビュー) だけ押せる
+    const cursor = hovered && (hovered.kind !== 'peak' || canFocus()) ? 'pointer' : '';
     if (renderer.domElement.style.cursor !== cursor) renderer.domElement.style.cursor = cursor;
   }
 
