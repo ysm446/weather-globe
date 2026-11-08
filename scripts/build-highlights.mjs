@@ -2,7 +2,7 @@
 // 実行: node scripts/build-highlights.mjs <ne_10m_rivers_lake_centerlines.geojson> <ne_10m_geography_regions_polys.geojson>
 //       <ne_10m_admin_0_countries.geojson> <ne_10m_geography_regions_elevation_points.geojson>
 //       <ne_10m_geography_regions_points.geojson> [flag-icons の flags/4x3 フォルダ]
-// 入力は https://github.com/nvkelso/natural-earth-vector の geojson/ から取る。出力は src/renderer/data/ の 4 つのファイル。
+// 入力は https://github.com/nvkelso/natural-earth-vector の geojson/ から取る。出力は src/renderer/data/ の 5 つのファイル (country-shapes-10m.json は国の形)。
 // 国旗のフォルダ (npm の flag-icons。MIT) を渡すと、使う国の国旗を src/renderer/public/flags/ に写す
 import fs from 'node:fs';
 import path from 'node:path';
@@ -257,9 +257,8 @@ const JA_OVERRIDES = {
 function loadCountries(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8')).features.map((feature) => {
     const p = feature.properties;
-    const polygons = (feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates] : feature.geometry.coordinates).map(
-      (rings) => rings.map((ring) => simplify(ring, COUNTRY_TOLERANCE_DEG)),
-    );
+    const raw = feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates] : feature.geometry.coordinates;
+    const polygons = raw.map((rings) => rings.map((ring) => simplify(ring, COUNTRY_TOLERANCE_DEG)));
     const bbox = [Infinity, Infinity, -Infinity, -Infinity];
     for (const rings of polygons) {
       for (const [lon, lat] of rings[0]) {
@@ -280,6 +279,7 @@ function loadCountries(file) {
       r: p.LABELRANK,
       w: p.WIKIDATAID || undefined,
       polygons,
+      raw, // 間引く前の形 (国の形を書き出すとき、小国が潰れないように使う)
       bbox,
     };
   });
@@ -404,6 +404,23 @@ function buildPoints(files) {
 }
 const points = buildPoints([elevationPointsFile, regionPointsFile]);
 
+// 国の形 (国名をクリックしたときに領域を描く)。約 1km で間引く。間引くと潰れる小さな島は省くが、
+// 国がまるごと消える小国は細かい許容で、それでも潰れれば (バチカンなど) 元の形で残す。初めて使うときに読み込むので別のファイルにする
+const SHAPE_TOLERANCES_DEG = [0.01, 0.001];
+const MIN_RING_POINTS = 4; // 閉じる点を含めて
+function countryShape(country) {
+  const keep = (rings) => rings.length >= MIN_RING_POINTS;
+  for (const tolerance of SHAPE_TOLERANCES_DEG) {
+    const simplified = country.raw
+      .map((rings) => rings.map((ring) => simplify(ring, tolerance)))
+      .filter((rings) => keep(rings[0]))
+      .map((rings) => rings.filter(keep));
+    if (simplified.length > 0) return simplified.map((rings) => rings.map((ring) => flatten(ring)));
+  }
+  return country.raw.map((rings) => rings.map((ring) => flatten(ring)));
+}
+const countryShapes = Object.fromEntries(countries.map((country) => [country.a3, countryShape(country)]));
+
 // 使う国の国旗を写す。flag-icons にない国 (国コードのない地域など) は国旗を出さない
 if (flagsDir) {
   const target = path.join(repoRoot, 'src', 'renderer', 'public', 'flags');
@@ -426,8 +443,10 @@ for (const [name, data] of [
   ['regions-10m.json', regions],
   ['countries-10m.json', countryTable],
   ['points-10m.json', points],
+  ['country-shapes-10m.json', countryShapes],
 ]) {
   const file = path.join(outDir, name);
   fs.writeFileSync(file, JSON.stringify(data));
-  console.log(`${name}: ${data.length} 件、${(fs.statSync(file).size / 1024).toFixed(0)} KB`);
+  const count = Array.isArray(data) ? data.length : Object.keys(data).length;
+  console.log(`${name}: ${count} 件、${(fs.statSync(file).size / 1024).toFixed(0)} KB`);
 }

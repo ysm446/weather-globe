@@ -2,6 +2,7 @@
 // データ (highlight-data.ts) は初めて使うときに読み込む。線は WebGL の普通の線だと 1 画素の太さにしかならないので、
 // 線分ごとに画面上で幅を持たせた帯として描き、源流からの距離 (0〜1) が uReveal を超えた部分は描かない
 import * as THREE from 'three';
+import { EdgeIndex } from './edge-index';
 import { lonLatToVector3 } from './globe';
 import { overlaps, type LabelBox } from './label-layout';
 import {
@@ -27,6 +28,10 @@ const ARROW_RADIUS = 1.00075; // 太さのある矢印の塗り。範囲の塗�
 const ARROW_OUTLINE_RADIUS = 1.000785;
 const MAX_SEGMENT_DEG = 0.5; // 長い線分は地表に沿うように分ける
 const MAX_TRIANGLE_DEG = 0.25; // 塗りの三角形も地表に沿うように分ける。内側へのグラデーションがなめらかになる細かさ
+// 輪郭からこれより離れた内側は、グラデーションがほぼ消えているので大きな三角形のままにする (国のような大きな範囲で三角形が増えすぎないように)。
+// 三角形の大きさは地表に沿う程度 (2 度の弦は地表から約 1.5/10000 沈み、塗りを浮かせている高さより小さい) に抑える
+const INTERIOR_KM = 200; // グラデーションの幅の上限 (AREA_GRADIENT_MAX_KM、90km) の 2 倍余り。ここでの濃さの違いは 2% ほどで目では分からない
+const MAX_INTERIOR_TRIANGLE_DEG = 2;
 const RIVER_WIDTH_PX = 5; // 描画の画素 (高 DPI ではそのぶん細く見える)
 const OUTLINE_WIDTH_PX = 3.5;
 // ハイライトの色。彩度を少し落とし、明るさをそろえた色。名前で選べる (CSS の色も渡せる)。
@@ -553,69 +558,97 @@ function areaFill(polygons: number[][][], color: THREE.Color): { mesh: THREE.Mes
 }
 
 // 範囲の輪郭の線。各輪を 1 周で 0〜1 に進める
+// 日付変更線で切られた形 (ロシア、フィジー、南極など) の、切れ目の辺は輪郭として描かない (国境のように光って見えた)
+export function onAntimeridian(lon: number): boolean {
+  const d = (((lon + 180) % 360) + 360) % 360;
+  return d < 1e-6 || d > 360 - 1e-6;
+}
+const isCut = (lon1: number, lon2: number): boolean => onAntimeridian(lon1) && onAntimeridian(lon2);
+
 function outlineRings(polygons: number[][][]): { coords: number[]; progress: number[] }[] {
-  return polygons.flat().map((ring) => {
+  return polygons.flat().flatMap((ring) => {
     const coords = unwrapLongitudes(ring);
-    return { coords, progress: progressAlong(coords) };
+    const progress = progressAlong(coords);
+    // 切れ目の辺で線を分ける。進み具合は輪全体のものをそのまま使う
+    const pieces: { coords: number[]; progress: number[] }[] = [];
+    let start = 0;
+    for (let i = 0; i + 1 < coords.length / 2; i++) {
+      if (!isCut(coords[i * 2], coords[i * 2 + 2])) continue;
+      if (i > start) pieces.push({ coords: coords.slice(start * 2, i * 2 + 2), progress: progress.slice(start, i + 1) });
+      start = i + 1;
+    }
+    if (start === 0) return [{ coords, progress }];
+    if (coords.length / 2 - 1 > start) pieces.push({ coords: coords.slice(start * 2), progress: progress.slice(start) });
+    return pieces;
   });
 }
 
 // 多角形 (輪の並び。1 つ目が外周) を三角形に分け、地表に沿うように細かくして球に貼る
 // 頂点ごとに輪郭までの距離 (km) も求め、グラデーションの幅を範囲の大きさから決めて返す
-function buildFill(polygons: number[][][]): { geometry: THREE.BufferGeometry; width: number } {
+export function buildFill(polygons: number[][][]): { geometry: THREE.BufferGeometry; width: number } {
   const positions: number[] = [];
   const edges: number[] = [];
   const v = new THREE.Vector3();
-  let segments: [THREE.Vector2, THREE.Vector2][] = [];
+  // 点から輪郭 (外周と穴の辺) までの一番近い距離 (km)。経度は緯度に合わせて縮める。遠い所は上限 (600km) でそろえる。
+  // グラデーションの幅は最大 90km なので、上限で切っても幅も見た目も変わらない
+  let index = new EdgeIndex([]);
   let farthest = 0;
-  // 点から輪郭 (外周と穴の辺) までの一番近い距離。経度は緯度に合わせて縮める
-  const edgeDistance = (lon: number, lat: number): number => {
-    const k = Math.cos((lat * Math.PI) / 180);
-    let best = Infinity;
-    for (const [a, b] of segments) {
-      const ax = (a.x - lon) * k;
-      const ay = a.y - lat;
-      const bx = (b.x - lon) * k;
-      const by = b.y - lat;
-      const dx = bx - ax;
-      const dy = by - ay;
-      const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1e-12)));
-      const d = Math.hypot(ax + dx * t, ay + dy * t);
-      if (d < best) best = d;
-    }
-    return best * 111.2;
-  };
-  const cache = new Map<string, number>();
-  const push = (lon: number, lat: number): void => {
-    lonLatToVector3(lon, lat, FILL_RADIUS, v);
-    positions.push(v.x, v.y, v.z);
-    const key = `${lon.toFixed(5)},${lat.toFixed(5)}`;
+  const edgeDistance = (lon: number, lat: number): number => index.distance(lon, lat);
+  // 同じ頂点の距離を何度も測らないよう覚えておく。キーは経度と緯度を 1/100000 度に丸めた数 (文字列のキーは遅かった)
+  const cache = new Map<number, number>();
+  const distanceAt = (lon: number, lat: number): number => {
+    const key = Math.round(lon * 1e5) * 2e7 + Math.round((lat + 90) * 1e5);
     let d = cache.get(key);
     if (d === undefined) {
       d = edgeDistance(lon, lat);
       cache.set(key, d);
     }
+    return d;
+  };
+  const push = (lon: number, lat: number): void => {
+    lonLatToVector3(lon, lat, FILL_RADIUS, v);
+    positions.push(v.x, v.y, v.z);
+    const d = distanceAt(lon, lat);
     edges.push(d);
     if (d > farthest) farthest = d;
   };
+  // 三角形を、一番長い辺の中点で 2 つに切ることを繰り返して細かくする。複雑な海岸線の形を三角形に分けると針のように細長い
+  // 三角形がたくさんでき、4 つに分けることを繰り返すと細長いものほど数が爆発した (ロシアで頂点が 1,500 万を超えた)。
+  // 長い辺だけを切れば、細長い三角形は長さに比例する数にしか増えない
+  // 辺の長さは km で測る (高緯度では経度 1 度が短いので、度のままでは必要以上に細かく分けていた)
+  const lengthKm = (p: THREE.Vector2, q: THREE.Vector2): number =>
+    Math.hypot((p.x - q.x) * Math.cos(((p.y + q.y) / 2) * (Math.PI / 180)), p.y - q.y) * 111.2;
   const subdivide = (a: THREE.Vector2, b: THREE.Vector2, c: THREE.Vector2, depth: number): void => {
-    const longest = Math.max(a.distanceTo(b), b.distanceTo(c), c.distanceTo(a));
-    if (longest <= MAX_TRIANGLE_DEG || depth > 8) {
+    const ab = lengthKm(a, b);
+    const bc = lengthKm(b, c);
+    const ca = lengthKm(c, a);
+    const longest = Math.max(ab, bc, ca);
+    // 内側の三角形 (どの頂点も輪郭から十分離れている) は大きいままでよい
+    const interior =
+      longest <= MAX_INTERIOR_TRIANGLE_DEG * 111.2 &&
+      Math.min(distanceAt(a.x, a.y), distanceAt(b.x, b.y), distanceAt(c.x, c.y)) - longest > INTERIOR_KM;
+    if (longest <= MAX_TRIANGLE_DEG * 111.2 || interior || depth > 40) {
       push(a.x, a.y);
       push(b.x, b.y);
       push(c.x, c.y);
       return;
     }
-    const ab = a.clone().add(b).multiplyScalar(0.5);
-    const bc = b.clone().add(c).multiplyScalar(0.5);
-    const ca = c.clone().add(a).multiplyScalar(0.5);
-    subdivide(a, ab, ca, depth + 1);
-    subdivide(ab, b, bc, depth + 1);
-    subdivide(ca, bc, c, depth + 1);
-    subdivide(ab, bc, ca, depth + 1);
+    if (longest === ab) {
+      const m = a.clone().add(b).multiplyScalar(0.5);
+      subdivide(a, m, c, depth + 1);
+      subdivide(m, b, c, depth + 1);
+    } else if (longest === bc) {
+      const m = b.clone().add(c).multiplyScalar(0.5);
+      subdivide(a, b, m, depth + 1);
+      subdivide(a, m, c, depth + 1);
+    } else {
+      const m = c.clone().add(a).multiplyScalar(0.5);
+      subdivide(a, b, m, depth + 1);
+      subdivide(m, b, c, depth + 1);
+    }
   };
-  for (const rings of polygons) {
-    // 外周の最初の点を基準に経度を続け、穴も同じ基準にそろえる
+  // 外周の最初の点を基準に経度を続け、穴も同じ基準にそろえる
+  const shapes = polygons.map((rings) => {
     const reference = rings[0][0];
     const toPoints = (ring: number[]): THREE.Vector2[] => {
       const unwrapped = unwrapLongitudes([reference, ring[1], ...ring], 0).slice(2);
@@ -624,11 +657,24 @@ function buildFill(polygons: number[][][]): { geometry: THREE.BufferGeometry; wi
       if (points.length > 1 && points[0].equals(points[points.length - 1])) points.pop(); // 閉じる点は除く
       return points;
     };
-    const contour = toPoints(rings[0]);
-    const holes = rings.slice(1).map(toPoints);
+    return { contour: toPoints(rings[0]), holes: rings.slice(1).map(toPoints) };
+  });
+  // 距離は形全体の輪郭で測る。日付変更線で切られた形 (ロシアなど) では、切れ目の向こうの部分の海岸線が一番近いことがあり、
+  // 部分ごとに測ると切れ目で濃さが食い違った。部分ごとに経度の基準が違うので、±360 度ずらした写しも入れる。
+  // 日付変更線の切れ目の辺は輪郭ではないので入れない (そこから内へのグラデーションは付けない)
+  const segments: [number, number, number, number][] = [];
+  for (const { contour, holes } of shapes) {
+    for (const ring of [contour, ...holes]) {
+      ring.forEach((point, i) => {
+        const next = ring[(i + 1) % ring.length];
+        if (isCut(point.x, next.x)) return;
+        for (const shift of [0, 360, -360]) segments.push([point.x + shift, point.y, next.x + shift, next.y]);
+      });
+    }
+  }
+  index = new EdgeIndex(segments);
+  for (const { contour, holes } of shapes) {
     const all = [contour, ...holes].flat();
-    segments = [contour, ...holes].flatMap((ring) => ring.map((point, i): [THREE.Vector2, THREE.Vector2] => [point, ring[(i + 1) % ring.length]]));
-    cache.clear();
     for (const [i, j, k] of THREE.ShapeUtils.triangulateShape(contour, holes)) subdivide(all[i], all[j], all[k], 0);
   }
   const geometry = new THREE.BufferGeometry();
