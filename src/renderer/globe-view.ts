@@ -567,7 +567,7 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
   const countryLabels = new CountryLabels(el('country-labels'), EARTH_SURFACE_RADIUS);
   let terrainLabelsEnabled = false;
   const terrainLabels = new TerrainLabels(el('terrain-labels'), EARTH_SURFACE_RADIUS);
-  const infoCard = new InfoCard(document.body); // 川の名前に乗せたときの詳しい情報
+  const infoCard = new InfoCard(document.body); // 川と湖の名前に乗せたときの詳しい情報
   const cameraPanel = new CameraPanel(camera, GLOBE_RADIUS);
   const scaleBar = new ScaleBar(camera, GLOBE_RADIUS);
   let scaleBarEnabled = true; // 設定の show_scale_bar
@@ -1326,13 +1326,16 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     if (cruiseBank && turnRate !== 0) camera.rotateZ((-turnRate / TURN_DEGREES_PER_SECOND) * BANK_DEGREES * THREE.MathUtils.DEG2RAD);
   }
 
-  // 地形の名前の川をクリックすると、その川の線を描く。もう一度クリックするか、ほかの所をクリックするか、Esc で消す。
+  // 地形の名前の川をクリックすると、その川の線を描き、湖をクリックすると、その湖の形を描く。
+  // もう一度クリックするか、ほかの所をクリックするか、Esc で消す。
   // 名前はマウスを素通りさせ (ドラッグを妨げない)、マウスの位置が名前の範囲に入っているかを確かめる。
   // マウスを乗せている間は名前を明るくし、カーソルを指の形にする。押してから離すまでに動いたものはクリックとしない
   const RIVER_CLICK_SLOP_PX = 5;
+  const LAKE_OUTLINE_COLOR = '#96cdff'; // 湖の名前 (.terrain-label.lake) と同じ水色
   const hoverPointer = { x: -1, y: -1, inside: false, pressed: false };
   let riverPress: { x: number; y: number } | null = null;
-  let selectedRiver: ReturnType<typeof terrainLabels.riverAt> = null;
+  // 描いている川か湖。湖の形は読み込みを待つので、待つ間に選び直されたら描かない
+  let selectedFeature: { kind: 'river' | 'lake'; key: string } | null = null;
   renderer.domElement.addEventListener('pointermove', (event) => {
     hoverPointer.x = event.clientX;
     hoverPointer.y = event.clientY;
@@ -1350,13 +1353,26 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     riverPress = null;
     if (!press || event.button !== 0) return;
     if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > RIVER_CLICK_SLOP_PX) return;
-    const hit = terrainLabels.riverAt(event.clientX, event.clientY);
-    selectedRiver = hit && hit.key !== selectedRiver?.key ? hit : null;
-    highlights.setPreview(selectedRiver?.key ?? null, selectedRiver?.lines);
+    const hit = terrainLabels.pickAt(event.clientX, event.clientY);
+    if (!hit || (hit.kind === selectedFeature?.kind && hit.key === selectedFeature.key)) {
+      selectedFeature = null;
+      highlights.setPreview(null);
+      return;
+    }
+    const selected = { kind: hit.kind, key: hit.key };
+    selectedFeature = selected;
+    // 同じ名前の川と湖を区別するため、種類を付けて下見を見分ける
+    if (hit.kind === 'river') {
+      highlights.setPreview(`river:${hit.key}`, hit.lines);
+      return;
+    }
+    void terrainLabels.lakeShape(hit.key).then((shape) => {
+      if (selectedFeature === selected) highlights.setAreaPreview(`lake:${hit.key}`, shape ?? [], LAKE_OUTLINE_COLOR);
+    });
   });
   window.addEventListener('keydown', (event) => {
-    if (event.code !== 'Escape' || !selectedRiver) return;
-    selectedRiver = null;
+    if (event.code !== 'Escape' || !selectedFeature) return;
+    selectedFeature = null;
     highlights.setPreview(null);
   });
 
@@ -1710,9 +1726,9 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     const cityBoxes = cityLabels.shownBoxes();
     countryLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes], apparentAltitude(), highlights.activeCountries());
     terrainLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes, ...countryLabels.shownBoxes()], apparentAltitude());
-    const hoveredRiver = hoverPointer.inside && !hoverPointer.pressed ? terrainLabels.riverAt(hoverPointer.x, hoverPointer.y) : null;
-    infoCard.update(hoveredRiver ? { kind: 'river', key: hoveredRiver.key, box: hoveredRiver.box } : null, performance.now());
-    const cursor = hoveredRiver ? 'pointer' : '';
+    const hovered = hoverPointer.inside && !hoverPointer.pressed ? terrainLabels.pickAt(hoverPointer.x, hoverPointer.y) : null;
+    infoCard.update(hovered ? { kind: hovered.kind, key: hovered.key, box: hovered.box } : null, performance.now());
+    const cursor = hovered ? 'pointer' : '';
     if (renderer.domElement.style.cursor !== cursor) renderer.domElement.style.cursor = cursor;
   }
 

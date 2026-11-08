@@ -384,7 +384,8 @@ button.city-label:active {
 }
 
 /* マウスを乗せた川の名前。線と一緒に明るくする */
-.terrain-label.river.hover {
+.terrain-label.river.hover,
+.terrain-label.lake.hover {
   color: #d6ecff;
 }
 
@@ -2308,7 +2309,7 @@ select.native-select {
   }
 }
 
-/* 川の名前に乗せたときの詳しい情報 (info-card.ts)。位置は transform で毎フレーム合わせる */
+/* 川と湖の名前に乗せたときの詳しい情報 (info-card.ts)。位置は transform で毎フレーム合わせる */
 .info-card {
   position: fixed;
   top: 0;
@@ -2336,6 +2337,10 @@ select.native-select {
   color: rgb(135, 195, 255); /* 地球の上の川の名前 (.terrain-label.river) と同じ水色 */
   font-size: 15px;
   font-weight: 500;
+}
+
+.info-card-title.lake {
+  color: rgb(150, 205, 255); /* 湖の名前 (.terrain-label.lake) と同じ */
 }
 
 .info-card-facts {
