@@ -260,7 +260,7 @@ export class TerrainLabels {
   }
 
   // 画面の点 (x, y) にある、出ている川の名前。マウスを乗せた川の線を描くのに使う。名前の少し外側まで反応させる
-  riverAt(x: number, y: number): { key: string; lines: RiverLine[] } | null {
+  riverAt(x: number, y: number): { key: string; lines: RiverLine[]; box: LabelBox } | null {
     if (this.container.hidden) return null;
     const pad = 4;
     let found: TerrainLabel | null = null;
@@ -272,7 +272,7 @@ export class TerrainLabels {
       if (hit && !found) found = label;
       label.element.classList.toggle('hover', hit && found === label);
     }
-    return found ? { key: found.key, lines: found.lines! } : null;
+    return found ? { key: found.key, lines: found.lines!, box: found.box! } : null;
   }
 
   shownBoxes(): LabelBox[] {

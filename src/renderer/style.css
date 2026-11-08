@@ -2308,6 +2308,66 @@ select.native-select {
   }
 }
 
+/* 川の名前に乗せたときの詳しい情報 (info-card.ts)。位置は transform で毎フレーム合わせる */
+.info-card {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  width: 300px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  animation: app-tip-in 150ms ease-out;
+}
+
+.info-card[hidden] {
+  display: none;
+}
+
+.info-card-title {
+  margin-bottom: 6px;
+  color: rgb(135, 195, 255); /* 地球の上の川の名前 (.terrain-label.river) と同じ水色 */
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.info-card-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0;
+}
+
+.info-card-facts dt {
+  color: var(--text-3);
+}
+
+.info-card-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.info-card-summary {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  color: var(--text-2);
+  border-top: 1px solid var(--line);
+}
+
+.info-card-source {
+  margin-top: 6px;
+  color: var(--text-3);
+  font-size: 10px;
+  text-align: right;
+}
+
 /* チェックボックス */
 input[type='checkbox'] {
   flex: none;
