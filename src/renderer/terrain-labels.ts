@@ -4,11 +4,13 @@
 // 湖は Natural Earth の日本語名 (scripts/build-lakes.mjs で絞ったもの) を、湖の内側の奥まった点に置く。クリックすると湖の形を描く。
 // 山の頂は寄ったときだけ、印と標高を付けて出す。都市名、国名、地点のマーカーには重ねない
 import * as THREE from 'three';
-import type { WorldToScreen } from './city-labels';
 import { lonLatToVector3 } from './globe';
-import { unwrapLongitudes, type PointRecord, type RegionRecord, type RiverRecord } from './highlight-data';
+import { riverLines, type PointRecord, type RegionRecord, type RiverLine, type RiverRecord } from './highlight-data';
 import { placeLabels, type LabelBox } from './label-layout';
 import { labelPoint } from './label-point';
+import { applyLayout, ensureMeasured, labelAt, rankAtAltitude, shownBoxes, updateHover, type RankTable, type ScreenLabel, type WorldToScreen } from './screen-labels';
+
+export type { RiverLine } from './highlight-data';
 
 // 出す範囲の種類と、色分けの組。島、半島、海岸などは数が多く混むので出さない
 const REGION_GROUPS: Record<string, 'desert' | 'mountain' | 'plateau' | 'lowland' | 'cold'> = {
@@ -28,7 +30,7 @@ const REGION_GROUPS: Record<string, 'desert' | 'mountain' | 'plateau' | 'lowland
 };
 
 // カメラの高さ (レンズの分を換算、地球の半径が 1) ごとの、出す地形の重要度 (scalerank) の上限。上から順に、この高さ以上なら
-const REGION_RANK_BY_ALTITUDE: [number, number][] = [
+const REGION_RANK_BY_ALTITUDE: RankTable = [
   [1.4, 1],
   [0.7, 2],
   [0.35, 3],
@@ -37,7 +39,7 @@ const REGION_RANK_BY_ALTITUDE: [number, number][] = [
   [0, 6],
 ];
 // 川と湖。上と同じく、カメラの高さごとの重要度 (scalerank) の上限
-const RIVER_RANK_BY_ALTITUDE: [number, number][] = [
+const RIVER_RANK_BY_ALTITUDE: RankTable = [
   [1.4, 2],
   [0.7, 3],
   [0.35, 5],
@@ -45,7 +47,7 @@ const RIVER_RANK_BY_ALTITUDE: [number, number][] = [
   [0.09, 8],
   [0, 10],
 ];
-const LAKE_RANK_BY_ALTITUDE: [number, number][] = [
+const LAKE_RANK_BY_ALTITUDE: RankTable = [
   [1.4, 1],
   [0.7, 3],
   [0.35, 5],
@@ -77,7 +79,7 @@ interface LakeRecord {
 }
 
 // 山の頂。-1 は出さない
-const PEAK_RANK_BY_ALTITUDE: [number, number][] = [
+const PEAK_RANK_BY_ALTITUDE: RankTable = [
   [0.35, -1],
   [0.18, 3],
   [0.09, 5],
@@ -88,34 +90,14 @@ const PEAK_MARK_HALF = 5; // 山の頂の印 (▲) の幅の半分 (px)。印の
 
 type TerrainKind = 'region' | 'peak' | 'river' | 'lake';
 
-// 川の線。coords は [lon, lat, ...] (経度は続けたもの)、progress は各点の源流からの距離 (0〜1)
-export interface RiverLine {
-  coords: number[];
-  progress: number[];
-}
-
-// 川の線ごとに、各点の源流からの距離 (0〜1) を求める (ツアーのハイライトの川と同じ式)。
-// 線の先頭の値 (源流からの距離 km) に、線に沿った長さを足し、川全体の長さで割る
-function riverLines(river: RiverRecord): RiverLine[] {
-  return river.l.map((line) => {
-    const coords = unwrapLongitudes(line.slice(1));
-    const along = [0];
-    for (let i = 2; i + 1 < coords.length; i += 2) {
-      const midLat = ((coords[i + 1] + coords[i - 1]) / 2) * (Math.PI / 180);
-      along.push(along[along.length - 1] + Math.hypot((coords[i] - coords[i - 2]) * Math.cos(midLat), coords[i + 1] - coords[i - 1]) * 111.2);
-    }
-    const progress = along.map((km) => Math.min(1, (line[0] + km) / Math.max(river.L, 1)));
-    return { coords, progress };
-  });
-}
-
-interface TerrainLabel {
+interface TerrainLabel extends ScreenLabel {
   rank: number;
   kind: TerrainKind;
   peak: boolean;
   lon: number; // 名前を置く点 (山の頂へ寄るのに使う。川は使わない)
   lat: number;
   candidates: THREE.Vector3[] | null; // 川の名前を置く候補の点。範囲、湖、山の頂は null
+  bounds: THREE.Sphere | null; // 候補の点をすべて含む球 (川だけ)。画面の外や地球の裏にある川は候補を 1 つずつ調べない
   lines: RiverLine[] | null; // 川の線 (クリックしたときに描く)。川のほかは null (湖の形は lakeShape で引く)
   polygons: number[][][] | null; // 範囲の形 (クリックしたときに描く)。範囲のほかは null
   color: string; // 範囲の輪郭の色
@@ -125,17 +107,7 @@ interface TerrainLabel {
   category: string; // 範囲の種類 (Natural Earth の FEATURECLA。Range/mtn など)
   elevation: number | null; // 山の頂の標高 (m。Natural Earth の値)
   current: number; // 川の名前を今置いている候補 (-1 は置いていない)
-  element: HTMLElement;
   world: THREE.Vector3;
-  width: number; // 文字の幅は変わらないので、最初に測って使い回す
-  height: number;
-  box: LabelBox | null;
-  transform: string;
-  shown: boolean;
-}
-
-function rankAt(table: [number, number][], altitude: number): number {
-  return (table.find(([min]) => altitude >= min) ?? table[table.length - 1])[1];
 }
 
 // マウスの下にある名前。川は線、湖は形をあとで引く (lakeShape)、範囲は形を持つ。山の頂は札を出すだけでクリックしない
@@ -147,8 +119,11 @@ export type TerrainPick =
 
 export class TerrainLabels {
   private labels: TerrainLabel[] = [];
+  private hovered: TerrainLabel | null = null;
   private loading: Promise<void> | null = null;
   private lakeShapes: Promise<Record<string, number[][][]>> | null = null;
+  private readonly frustum = new THREE.Frustum();
+  private readonly viewProjection = new THREE.Matrix4();
 
   constructor(
     private readonly container: HTMLElement,
@@ -213,6 +188,7 @@ export class TerrainLabels {
       element.textContent = ja;
       const label = this.makeLabel(element, 0, 0, group.rank, 'river');
       label.candidates = candidates;
+      label.bounds = new THREE.Sphere().setFromPoints(candidates);
       label.lines = group.lines;
       label.key = ja;
       label.name = ja;
@@ -258,6 +234,7 @@ export class TerrainLabels {
       kind,
       peak: kind === 'peak',
       candidates: null,
+      bounds: null,
       lines: null,
       polygons: null,
       color: '',
@@ -276,12 +253,31 @@ export class TerrainLabels {
       box: null,
       transform: '',
       shown: false,
+      far: false,
+      farSince: 0,
     };
+  }
+
+  // 川の候補の点がどれも画面に入らないか。候補を含む球が視錐台の外にあるか、カメラから見て地平線の向こうにあるとき。
+  // 224 本の川の候補 (80 点ずつ) を毎フレーム投影すると、巡航中の CPU 時間の 1 割近くを占めていた
+  private riverOutOfView(label: TerrainLabel, eye: THREE.Vector3): boolean {
+    const bounds = label.bounds!;
+    if (!this.frustum.intersectsSphere(bounds)) return true;
+    // 球の中心とカメラの間の角度から球の見込みの角度を引いたものが地平線の角度 (地球の半径が 1 で、カメラまでの距離が d のとき acos(1/d)) より
+    // 大きければ、球のどの点も地平線の向こう (toScreen の判定と同じ)
+    const distance = eye.length();
+    const angle = Math.acos(THREE.MathUtils.clamp(bounds.center.dot(eye) / (bounds.center.length() * distance), -1, 1));
+    const spread = Math.asin(Math.min(1, bounds.radius / bounds.center.length()));
+    return angle - spread > Math.acos(Math.min(1, 1 / distance));
   }
 
   // 川の名前を置く点。画面に入っている候補のうち、画面の中心に一番近い点。ちらつかないよう、今の点がまだ使えて、
   // はっきり中心に近い点がなければ動かさない
-  private riverPoint(label: TerrainLabel, toScreen: WorldToScreen): { x: number; y: number } | null {
+  private riverPoint(label: TerrainLabel, toScreen: WorldToScreen, eye: THREE.Vector3): { x: number; y: number } | null {
+    if (this.riverOutOfView(label, eye)) {
+      label.current = -1;
+      return null;
+    }
     const candidates = label.candidates!;
     const width = window.innerWidth;
     const height = window.innerHeight;
@@ -310,17 +306,8 @@ export class TerrainLabels {
   // 画面の点 (x, y) にある、出ている名前。マウスを乗せた名前を明るくし、札を出したり、クリックで川の線や湖と範囲の形を
   // 描いたりするのに使う。名前の少し外側まで反応させる。重なっているときは先に置いた (重要な) 名前を選ぶ
   pickAt(x: number, y: number): TerrainPick | null {
-    if (this.container.hidden) return null;
-    const pad = 4;
-    let found: TerrainLabel | null = null;
-    for (const label of this.labels) {
-      const box = label.box;
-      const hit =
-        label.shown && box !== null &&
-        x >= box.x - pad && x <= box.x + box.width + pad && y >= box.y - pad && y <= box.y + box.height + pad;
-      if (hit && !found) found = label;
-      label.element.classList.toggle('hover', hit && found === label);
-    }
+    const found = this.container.hidden ? null : labelAt(this.labels, x, y);
+    this.hovered = updateHover(this.hovered, found);
     if (!found) return null;
     const { key, name } = found;
     const box = found.box!;
@@ -345,49 +332,33 @@ export class TerrainLabels {
   }
 
   shownBoxes(): LabelBox[] {
-    if (this.container.hidden) return [];
-    return this.labels.filter((label) => label.shown && label.box).map((label) => label.box as LabelBox);
+    return this.container.hidden ? [] : shownBoxes(this.labels);
   }
 
-  // 毎フレーム呼ぶ。blocked は重ねない範囲 (都市のラベル、国名など)、altitude はレンズの分を換算したカメラの高さ
-  update(toScreen: WorldToScreen, blocked: LabelBox[], altitude: number): void {
+  // 毎フレーム呼ぶ。blocked は重ねない範囲 (都市のラベル、国名など)、altitude はレンズの分を換算したカメラの高さ。
+  // camera は toScreen と同じカメラ (川の候補をまとめて外す判定に使う)
+  update(toScreen: WorldToScreen, blocked: LabelBox[], altitude: number, camera: THREE.Camera): void {
     if (this.container.hidden || this.labels.length === 0) return;
     const maxRank: Record<TerrainKind, number> = {
-      region: rankAt(REGION_RANK_BY_ALTITUDE, altitude),
-      peak: rankAt(PEAK_RANK_BY_ALTITUDE, altitude),
-      river: rankAt(RIVER_RANK_BY_ALTITUDE, altitude),
-      lake: rankAt(LAKE_RANK_BY_ALTITUDE, altitude),
+      region: rankAtAltitude(REGION_RANK_BY_ALTITUDE, altitude),
+      peak: rankAtAltitude(PEAK_RANK_BY_ALTITUDE, altitude),
+      river: rankAtAltitude(RIVER_RANK_BY_ALTITUDE, altitude),
+      lake: rankAtAltitude(LAKE_RANK_BY_ALTITUDE, altitude),
     };
+    this.frustum.setFromProjectionMatrix(this.viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    const eye = camera.position;
     const boxes = this.labels.map((label): LabelBox | null => {
       if (label.rank > maxRank[label.kind]) {
         label.current = -1;
         return null;
       }
-      const point = label.candidates ? this.riverPoint(label, toScreen) : toScreen(label.world);
+      const point = label.candidates ? this.riverPoint(label, toScreen, eye) : toScreen(label.world);
       if (!point) return null;
-      if (label.width === 0) {
-        label.width = label.element.offsetWidth;
-        label.height = label.element.offsetHeight;
-      }
+      ensureMeasured(label);
       // 範囲の名前は点を中心に、山の頂は印の中心を頂に合わせる
       const x = label.peak ? point.x - PEAK_MARK_HALF : point.x - label.width / 2;
       return { x, y: point.y - label.height / 2, width: label.width, height: label.height };
     });
-    const shown = placeLabels(boxes, blocked);
-    this.labels.forEach((label, index) => {
-      const box = boxes[index];
-      label.box = box;
-      if (box) {
-        const transform = `translate(${box.x.toFixed(1)}px, ${box.y.toFixed(1)}px)`;
-        if (transform !== label.transform) {
-          label.transform = transform;
-          label.element.style.transform = transform;
-        }
-      }
-      if (shown[index] !== label.shown) {
-        label.shown = shown[index];
-        label.element.classList.toggle('off', !label.shown);
-      }
-    });
+    applyLayout(this.labels, boxes, placeLabels(boxes, blocked), performance.now());
   }
 }

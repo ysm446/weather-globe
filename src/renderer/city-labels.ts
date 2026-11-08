@@ -4,21 +4,15 @@ import { tierAtAltitude, type MapCity } from './cities';
 import type { DemoPlace } from './demo';
 import { lonLatToVector3 } from './globe';
 import { placeLabels, type LabelBox } from './label-layout';
+import { applyLayout, ensureMeasured, shownBoxes, type ScreenLabel, type WorldToScreen } from './screen-labels';
 
-interface CityLabel {
+interface CityLabel extends ScreenLabel {
   place: MapCity;
   element: HTMLButtonElement;
   world: THREE.Vector3;
-  width: number; // 文字の幅は変わらないので、最初に測って使い回す
-  height: number;
   dotX: number; // ラベルの左上から点の中心まで。点は文字のベースラインに合わせて置くので、箱の中央とは限らない
   dotY: number;
-  transform: string;
-  shown: boolean;
-  box: LabelBox | null; // 最後に置いた位置
 }
-
-export type WorldToScreen = (world: THREE.Vector3) => { x: number; y: number } | null;
 
 export class CityLabels {
   private readonly labels: CityLabel[];
@@ -52,6 +46,8 @@ export class CityLabels {
         dotY: 0,
         transform: '',
         shown: false,
+        far: false,
+        farSince: 0,
         box: null,
       };
       element.addEventListener('mouseenter', () => (this.hoveredLabel = label));
@@ -62,12 +58,12 @@ export class CityLabels {
     });
   }
 
-  // マウスを乗せている都市と、そのラベルの画面上の範囲。隠れているときは null
+  // マウスを乗せている都市と、そのラベルの画面上の範囲。隠れているときは null。
+  // 範囲は最後に置いた位置 (getBoundingClientRect は毎フレーム呼ぶとレイアウトを強制して遅かった)
   hovered(): { place: MapCity; box: LabelBox } | null {
     const label = this.hoveredLabel;
-    if (!label || this.container.hidden || !label.shown) return null;
-    const rect = label.element.getBoundingClientRect();
-    return { place: label.place, box: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } };
+    if (!label || this.container.hidden || !label.shown || !label.box) return null;
+    return { place: label.place, box: label.box };
   }
 
   setVisible(visible: boolean): void {
@@ -87,8 +83,7 @@ export class CityLabels {
 
   // 今画面に出ているラベルの範囲。国名をこれに重ねないために使う
   shownBoxes(): LabelBox[] {
-    if (this.container.hidden) return [];
-    return this.labels.filter((label) => label.shown && label.box).map((label) => label.box as LabelBox);
+    return this.container.hidden ? [] : shownBoxes(this.labels);
   }
 
   // 毎フレーム呼ぶ。blocked はラベルを重ねない範囲、altitude はレンズの分を換算したカメラの高さ
@@ -100,29 +95,13 @@ export class CityLabels {
       const point = toScreen(label.world);
       if (!point) return null;
       if (label.width === 0) {
-        label.width = label.element.offsetWidth;
-        label.height = label.element.offsetHeight;
+        ensureMeasured(label);
         const dot = label.element.firstElementChild as HTMLElement;
         label.dotX = dot.offsetLeft + dot.offsetWidth / 2;
         label.dotY = dot.offsetTop + dot.offsetHeight / 2;
       }
       return { x: point.x - label.dotX, y: point.y - label.dotY, width: label.width, height: label.height };
     });
-    const shown = placeLabels(boxes, blocked);
-    this.labels.forEach((label, index) => {
-      const box = boxes[index];
-      label.box = box;
-      if (box) {
-        const transform = `translate(${box.x}px, ${box.y}px)`;
-        if (transform !== label.transform) {
-          label.transform = transform;
-          label.element.style.transform = transform;
-        }
-      }
-      if (shown[index] !== label.shown) {
-        label.shown = shown[index];
-        label.element.classList.toggle('off', !label.shown);
-      }
-    });
+    applyLayout(this.labels, boxes, placeLabels(boxes, blocked), performance.now());
   }
 }

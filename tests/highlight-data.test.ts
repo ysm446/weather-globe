@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
 import {
+  alongKm,
   boundsOf,
   findByName,
   normalizeName,
   pointNames,
+  progressAlong,
   regionNames,
+  riverLines,
   riverNames,
   unwrapLongitudes,
   type PointRecord,
@@ -91,4 +94,23 @@ test('範囲は日付変更線をまたいでも狭い側を返す', () => {
 
 test('経度は前の点から 180 度より離れないように続ける', () => {
   assert.deepEqual(unwrapLongitudes([179, 0, -179, 1, -178, 2]), [179, 0, 181, 1, 182, 2]);
+});
+
+test('alongKm は線に沿った長さを km で積み上げ、progressAlong はそれを 0〜1 にする', () => {
+  // 赤道上を東へ 1 度、さらに北へ 1 度
+  const along = alongKm([0, 0, 1, 0, 1, 1]);
+  assert.equal(along.length, 3);
+  assert.equal(along[0], 0);
+  assert.ok(Math.abs(along[1] - 111.2) < 1e-9);
+  assert.ok(Math.abs(along[2] - 222.4) < 1e-6);
+  assert.deepEqual(progressAlong([0, 0, 1, 0, 1, 1]).map((t) => Math.round(t * 100) / 100), [0, 0.5, 1]);
+  assert.deepEqual(progressAlong([0, 0]), [0]);
+});
+
+test('riverLines は線の始点の距離に沿った長さを足し、川全体の長さで割る', () => {
+  const river = { n: 'R', a: [], r: 1, L: 222.4, l: [[111.2, 0, 0, 1, 0]], c: [] };
+  const [line] = riverLines(river);
+  assert.deepEqual(line.coords, [0, 0, 1, 0]);
+  assert.ok(Math.abs(line.progress[0] - 0.5) < 1e-9);
+  assert.ok(Math.abs(line.progress[1] - 1) < 1e-9);
 });

@@ -1,13 +1,13 @@
 // 地球儀の上に出す国名と国旗。設定の「国名を表示」で出す。データはツアーのハイライトと同じ (highlight-data.ts)。
 // 引いているときは大きな国だけ、寄るほど小さな国まで出す。都市のラベルと地点のマーカーには重ねない
 import * as THREE from 'three';
-import type { WorldToScreen } from './city-labels';
 import { lonLatToVector3 } from './globe';
 import type { CountryRecord } from './highlight-data';
 import { placeLabels, type LabelBox } from './label-layout';
+import { applyLayout, ensureMeasured, labelAt, rankAtAltitude, shownBoxes, updateHover, type RankTable, type ScreenLabel, type WorldToScreen } from './screen-labels';
 
 // カメラの高さ (レンズの分を換算、地球の半径が 1) ごとの、出す国の LABELRANK の上限。上から順に、この高さ以上なら
-const RANK_BY_ALTITUDE: [number, number][] = [
+const RANK_BY_ALTITUDE: RankTable = [
   [1.4, 3],
   [0.6, 4],
   [0.3, 5],
@@ -15,23 +15,14 @@ const RANK_BY_ALTITUDE: [number, number][] = [
   [0, 8],
 ];
 
-interface CountryLabel {
+interface CountryLabel extends ScreenLabel {
   country: CountryRecord;
-  element: HTMLElement;
   world: THREE.Vector3;
-  width: number; // 文字の幅は変わらないので、最初に測って使い回す
-  height: number;
-  box: LabelBox | null;
-  transform: string;
-  shown: boolean;
-}
-
-export function rankAtAltitude(altitude: number): number {
-  return (RANK_BY_ALTITUDE.find(([min]) => altitude >= min) ?? RANK_BY_ALTITUDE[RANK_BY_ALTITUDE.length - 1])[1];
 }
 
 export class CountryLabels {
   private labels: CountryLabel[] = [];
+  private hovered: CountryLabel | null = null;
   private loading: Promise<void> | null = null;
   private shapes: Promise<Record<string, number[][][]>> | null = null;
 
@@ -73,23 +64,16 @@ export class CountryLabels {
         box: null,
         transform: '',
         shown: false,
+        far: false,
+        farSince: 0,
       };
     });
   }
 
   // 画面の点 (x, y) にある、出ている国名。マウスを乗せた国名を明るくし、詳しい情報の札を出すのに使う
   pickAt(x: number, y: number): { a3: string; name: string; box: LabelBox } | null {
-    if (this.container.hidden) return null;
-    const pad = 4;
-    let found: CountryLabel | null = null;
-    for (const label of this.labels) {
-      const box = label.box;
-      const hit =
-        label.shown && box !== null &&
-        x >= box.x - pad && x <= box.x + box.width + pad && y >= box.y - pad && y <= box.y + box.height + pad;
-      if (hit && !found) found = label;
-      label.element.classList.toggle('hover', hit && found === label);
-    }
+    const found = this.container.hidden ? null : labelAt(this.labels, x, y);
+    this.hovered = updateHover(this.hovered, found);
     return found ? { a3: found.country.a3, name: found.country.ja || found.country.n, box: found.box! } : null;
   }
 
@@ -102,39 +86,20 @@ export class CountryLabels {
   }
 
   shownBoxes(): LabelBox[] {
-    if (this.container.hidden) return [];
-    return this.labels.filter((label) => label.shown && label.box).map((label) => label.box as LabelBox);
+    return this.container.hidden ? [] : shownBoxes(this.labels);
   }
 
   // 毎フレーム呼ぶ。blocked は重ねない範囲 (都市のラベルなど)、excluded はハイライトがすでに出している国 (ADM0_A3)
   update(toScreen: WorldToScreen, blocked: LabelBox[], altitude: number, excluded: ReadonlySet<string>): void {
     if (this.container.hidden || this.labels.length === 0) return;
-    const maxRank = rankAtAltitude(altitude);
+    const maxRank = rankAtAltitude(RANK_BY_ALTITUDE, altitude);
     const boxes = this.labels.map((label): LabelBox | null => {
       if (label.country.r > maxRank || excluded.has(label.country.a3)) return null;
       const point = toScreen(label.world);
       if (!point) return null;
-      if (label.width === 0) {
-        label.width = label.element.offsetWidth;
-        label.height = label.element.offsetHeight;
-      }
+      ensureMeasured(label);
       return { x: point.x - label.width / 2, y: point.y - label.height / 2, width: label.width, height: label.height };
     });
-    const shown = placeLabels(boxes, blocked);
-    this.labels.forEach((label, index) => {
-      const box = boxes[index];
-      label.box = box;
-      if (box) {
-        const transform = `translate(${box.x.toFixed(1)}px, ${box.y.toFixed(1)}px)`;
-        if (transform !== label.transform) {
-          label.transform = transform;
-          label.element.style.transform = transform;
-        }
-      }
-      if (shown[index] !== label.shown) {
-        label.shown = shown[index];
-        label.element.classList.toggle('off', !label.shown);
-      }
-    });
+    applyLayout(this.labels, boxes, placeLabels(boxes, blocked), performance.now());
   }
 }

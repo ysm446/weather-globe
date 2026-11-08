@@ -1,7 +1,7 @@
 # plan — 実装方針と優先順位
 
 作成日時: 2026-07-24 22:14
-更新日時: 2026-11-07 03:00
+更新日時: 2026-11-09 07:54
 
 ## 構成
 
@@ -29,7 +29,7 @@
 | `settings-dialog.ts` | 設定画面 |
 | `music-player.ts` | 右上の音楽のボタン、縦の音量バー、音楽の再生 |
 | `demo-controller.ts` | デモの進行(場面と行き先は `demo.ts`) |
-| `city-labels.ts` | 都市のラベル(都市の一覧と段は `cities.ts`、重なりの判定は `label-layout.ts`) |
+| `city-labels.ts`、`country-labels.ts`、`terrain-labels.ts` | 都市のラベル、国名、地形の名前(都市の一覧と段は `cities.ts`、重なりの判定は `label-layout.ts`、3 つに共通の DOM への書き込みと高さごとの絞り込みは `screen-labels.ts`) |
 | `time-control.ts` | 過去の時刻のスライダー(計算は `time-view.ts`) |
 | `cloud-blend.ts` | 新しい雲の画像を、見えている雲から線形に混ぜて入れ替える |
 | `math.ts`、`glsl.ts`、`dom.ts` | 共有の計算、シェーダー、画面の部品 |

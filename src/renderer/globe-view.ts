@@ -1544,13 +1544,16 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     cityLabels.setExcluded(null);
   }
 
-  // 地球の裏側やカメラの後ろにあるときは null を返す
+  // 地球の裏側やカメラの後ろにあるときは null を返す。
+  // 毎フレーム数千回呼ぶので、投影の前に地平線の判定 (内積だけ) で地球の裏側の点を外す
   function toScreen(world: THREE.Vector3): { x: number; y: number } | null {
-    const distance = camera.position.length();
-    const facing = world.dot(camera.position) / (world.length() * distance);
+    // 点とカメラの向きの余弦が GLOBE_RADIUS / (カメラまでの距離) 以下なら地平線の向こう。
+    // 両辺にカメラまでの距離と点までの距離を掛けると「内積 <= GLOBE_RADIUS × 点までの距離」になり、平方根なしで 2 乗して比べられる
+    const dot = world.dot(camera.position);
+    if (dot <= 0 || dot * dot <= GLOBE_RADIUS * GLOBE_RADIUS * world.lengthSq()) return null;
     projected.copy(world).project(camera);
     // 斜めの視点では、地平線より手前でもカメラの後ろにあることがある (このとき z は 1 を超える)
-    if (facing <= GLOBE_RADIUS / distance || projected.z >= 1) return null;
+    if (projected.z >= 1) return null;
     return { x: ((projected.x + 1) / 2) * window.innerWidth, y: ((1 - projected.y) / 2) * window.innerHeight };
   }
 
@@ -1809,7 +1812,7 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     cityLabels.update(toScreen, [...markerBox, ...highlightBoxes], apparentAltitude());
     const cityBoxes = cityLabels.shownBoxes();
     countryLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes], apparentAltitude(), highlights.activeCountries());
-    terrainLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes, ...countryLabels.shownBoxes()], apparentAltitude());
+    terrainLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes, ...countryLabels.shownBoxes()], apparentAltitude(), camera);
     const hovered = hoverPointer.inside && !hoverPointer.pressed ? terrainLabels.pickAt(hoverPointer.x, hoverPointer.y) : null;
     const infoTarget = hoverTarget(hovered);
     infoCard.update(infoTarget, performance.now());
@@ -2124,8 +2127,6 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
       camera.position.copy(target).multiplyScalar(-4).addScaledVector(side, body === 'sunrise' ? -1.03 : -1.6);
     },
   };
-
-  const EARTH_RADIUS_KM = 6371;
 
   // MCP サーバー (メインプロセス) から呼ぶ操作。外の LLM がカメラ、ハイライト、字幕、ツアーを動かす
   const remote = {

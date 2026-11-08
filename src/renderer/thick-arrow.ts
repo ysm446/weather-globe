@@ -2,8 +2,8 @@
 // 先端に帯より幅の広い矢じりを付ける (根元から先へ太らせる形は、道筋が読みにくいのでやめた)。渡された点を直線で結び、角だけを丸めてから帯にする
 // (角で帯が折れ重なるのを防ぐ)。描画 (highlights.ts) から切り離して検証できるよう、Three.js に依存しない。
 // 計算は矢印のまわりの平面 (経度を緯度で縮めた km の座標) で行う。数千 km までの矢印ならずれは小さい
+import { KM_PER_DEGREE, smoothstep } from './math.ts';
 
-const KM_PER_DEGREE = 111.2;
 const HEAD_WIDTH_RATIO = 1.9; // 矢じりの幅 (帯の太さに対する割合)
 const HEAD_LENGTH_RATIO = 1.3; // 矢じりの長さ (矢じりの幅に対する割合)
 const HEAD_MAX_SHARE = 0.4; // 短い矢印でも、矢じりは全体の長さのこの割合まで
@@ -107,15 +107,11 @@ export function buildThickArrow(points: [number, number][], widthKm: number, opt
   if (offset !== 0) {
     const whole = along[along.length - 1];
     const taper = Math.min(widthKm * OFFSET_TAPER_RATIO, whole * 0.35);
-    const smooth = (x: number): number => {
-      const t = Math.max(0, Math.min(1, x));
-      return t * t * (3 - 2 * t);
-    };
     path = path.map((point, i) => {
       const tangent = normalize(sub(path[Math.min(i + 1, path.length - 1)], path[Math.max(i - 1, 0)]));
       const right: Vec = [tangent[1], -tangent[0]];
       const nearEnd = Math.min(along[i], whole - along[i]);
-      return add(point, scale(right, offset * (1 - smooth(nearEnd / taper))));
+      return add(point, scale(right, offset * (1 - smoothstep(0, taper, nearEnd))));
     });
     along = measure(path);
   }

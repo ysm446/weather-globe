@@ -15,6 +15,7 @@ export class ScaleBar {
   private readonly left = new THREE.Vector3();
   private readonly right = new THREE.Vector3();
   private text = '';
+  private km = -1; // 出している刻み (km)
   private width = -1;
 
   constructor(
@@ -30,9 +31,9 @@ export class ScaleBar {
       return;
     }
     const bar = niceScale(km / (PROBE_PX * 2), MAX_BAR_PX);
-    const text = formatScaleDistance(bar.km);
     const width = Math.round(bar.px);
-    if (text !== this.text) this.label.textContent = this.text = text;
+    // 文字の書式 (toLocaleString) は遅いので、刻みが変わったときだけ作る
+    if (bar.km !== this.km) this.label.textContent = this.text = formatScaleDistance((this.km = bar.km));
     if (width !== this.width) this.line.style.width = `${(this.width = width)}px`;
     this.root.hidden = false;
   }

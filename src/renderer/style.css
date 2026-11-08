@@ -334,6 +334,14 @@ button.city-label:active {
   opacity: 0;
 }
 
+/* 画面に出る見込みのない名前 (遠すぎる、地球の裏側) はレイアウトからも外す (screen-labels.ts の applyLayout)。
+   2,000 近い名前を置いたままにすると、毎フレームの描画の準備が重かった */
+.city-label.far,
+.country-label.far,
+.terrain-label.far {
+  display: none;
+}
+
 /* 地形の名前。都市名や国名と見分けられるよう、地図帳のように字間を広げ、地形の種類で色を分ける。重要な地形ほど大きい */
 .terrain-label {
   position: fixed;

@@ -27,13 +27,30 @@ export interface TapeMarker {
   dim?: boolean;
 }
 
+// テープに出している印の要素と、最後に書いた中身 (変わったときだけ書き換える)
+interface MarkerNode {
+  element: HTMLDivElement;
+  html: string;
+  classes: string;
+  left: string;
+  width: number; // 要素の幅 (px)。中身が変わるまで測り直さない。0 は未計測
+}
+
 export class HeadingTape {
   private readonly root = el('heading-tape');
   private readonly strip = document.createElement('div');
   private readonly markerLayer = document.createElement('div');
+  private readonly nodes: MarkerNode[] = [];
   private shown = false;
+  private width = 0; // テープの幅 (px)。0 は未計測
+  private degreePixels = 0;
+  private stripTransform = '';
 
   constructor() {
+    new ResizeObserver(() => {
+      this.width = 0;
+      for (const node of this.nodes) node.width = 0;
+    }).observe(this.root);
     this.strip.className = 'tape-strip';
     for (let degrees = STRIP_START; degrees <= STRIP_END; degrees += TICK_DEGREES) {
       const tick = document.createElement('div');
@@ -61,33 +78,61 @@ export class HeadingTape {
     return this.shown;
   }
 
+  // 毎フレーム呼ぶ。印の要素は使い回し、中身や位置が変わったときだけ DOM に書く。
+  // 以前は毎フレーム innerHTML を作り直してから幅を測っていたため、毎フレーム再レイアウトが走り、巡航中の CPU 時間の 2 割を占めていた
   update(heading: number, markers: TapeMarker[]): void {
-    const width = this.root.clientWidth;
+    // 幅は大きさが変わったとき (ResizeObserver) だけ測り直す
+    const width = this.width || (this.width = this.root.clientWidth);
+    if (width === 0) return;
     const degreePixels = width / SPAN_DEGREES;
-    this.root.style.setProperty('--deg', `${degreePixels}px`);
+    if (degreePixels !== this.degreePixels) {
+      this.degreePixels = degreePixels;
+      this.root.style.setProperty('--deg', `${degreePixels}px`);
+    }
     const center = ((heading % 360) + 360) % 360;
-    this.strip.style.transform = `translateX(${width / 2 - (center - STRIP_START) * degreePixels}px)`;
+    const stripTransform = `translateX(${(width / 2 - (center - STRIP_START) * degreePixels).toFixed(2)}px)`;
+    if (stripTransform !== this.stripTransform) {
+      this.stripTransform = stripTransform;
+      this.strip.style.transform = stripTransform;
+    }
 
     const half = SPAN_DEGREES / 2 - EDGE_MARGIN_DEGREES;
-    this.markerLayer.innerHTML = markers
-      .map(({ bearing, icon, label, className, dim }) => {
-        const offset = wrapDegrees(bearing - heading);
-        const side = offset > half ? 'right' : offset < -half ? 'left' : null;
-        const text = label ? `<span>${escapeHtml(label)}</span>` : '';
-        const arrow = side ? `<span class="tape-arrow">${side === 'left' ? '◀' : '▶'}</span>` : '';
-        const content = side === 'left' ? arrow + icon + text : icon + text + arrow;
-        const classes = ['tape-marker', className, dim ? 'dim' : null, side ? `edge-${side}` : null].filter(Boolean).join(' ');
-        // テープの外の方角にある印は、文字がはみ出さないよう端に揃えて置く
-        const position = side ? '' : `left: ${(width / 2 + offset * degreePixels).toFixed(1)}px`;
-        return `<div class="${classes}" style="${position}">${content}</div>`;
-      })
-      .join('');
-    // 端の近くにある長い印も、テープの中に収まるようにずらす
-    for (const marker of this.markerLayer.children) {
-      if (!(marker instanceof HTMLElement) || !marker.style.left) continue;
-      const half = marker.offsetWidth / 2 + MARKER_PADDING;
-      const x = Math.min(Math.max(parseFloat(marker.style.left), half), width - half);
-      marker.style.left = `${x.toFixed(1)}px`;
-    }
+    while (this.nodes.length > markers.length) this.nodes.pop()!.element.remove();
+    markers.forEach(({ bearing, icon, label, className, dim }, index) => {
+      let node = this.nodes[index];
+      if (!node) {
+        node = { element: document.createElement('div'), html: '', classes: '', left: '', width: 0 };
+        this.markerLayer.append(node.element);
+        this.nodes.push(node);
+      }
+      const offset = wrapDegrees(bearing - heading);
+      const side = offset > half ? 'right' : offset < -half ? 'left' : null;
+      const text = label ? `<span>${escapeHtml(label)}</span>` : '';
+      const arrow = side ? `<span class="tape-arrow">${side === 'left' ? '◀' : '▶'}</span>` : '';
+      const html = side === 'left' ? arrow + icon + text : icon + text + arrow;
+      if (html !== node.html) {
+        node.html = html;
+        node.element.innerHTML = html;
+        node.width = 0; // 中身が変わったので幅を測り直す
+      }
+      const classes = ['tape-marker', className, dim ? 'dim' : null, side ? `edge-${side}` : null].filter(Boolean).join(' ');
+      if (classes !== node.classes) {
+        node.classes = classes;
+        node.element.className = classes;
+      }
+      // テープの外の方角にある印は、文字がはみ出さないよう端に揃えて置く (CSS の .edge-left と .edge-right)。
+      // 端の近くにある長い印も、テープの中に収まるようにずらす
+      let left = '';
+      if (!side) {
+        if (node.width === 0) node.width = node.element.offsetWidth;
+        const halfWidth = node.width / 2 + MARKER_PADDING;
+        const x = Math.min(Math.max(width / 2 + offset * degreePixels, halfWidth), width - halfWidth);
+        left = `${x.toFixed(1)}px`;
+      }
+      if (left !== node.left) {
+        node.left = left;
+        node.element.style.left = left;
+      }
+    });
   }
 }

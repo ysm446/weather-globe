@@ -2,6 +2,7 @@
 // 範囲の内側で縁から一番遠い点を求める (polylabel と同じ考え方。マス目を分けながら、縁から遠そうなマスだけを調べる)。
 // DOM に依存しない
 import { unwrapLongitudes } from './highlight-data.ts';
+import { wrapDegrees } from './math.ts';
 
 const PRECISION_DEG = 0.05; // これより細かくは探さない (約 5km)
 
@@ -123,7 +124,5 @@ export function labelPoint(polygons: number[][][]): LonLatPoint {
   if (!best) return { lon: 0, lat: 0 };
   const [x, y] = poleOfInaccessibility(best.rings);
   const scale = Math.cos((best.lat0 * Math.PI) / 180);
-  let lon = x / scale + best.lon0;
-  lon = ((((lon + 180) % 360) + 360) % 360) - 180;
-  return { lon, lat: y };
+  return { lon: wrapDegrees(x / scale + best.lon0), lat: y };
 }

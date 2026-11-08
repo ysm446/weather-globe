@@ -1,6 +1,7 @@
 // 計算の共通部品。DOM と Three.js に依存しない。
 // node --test が直接読むファイルからは、拡張子付き ('./math.ts') で import する
 export const DEG = Math.PI / 180;
+export const KM_PER_DEGREE = 111.2; // 地表の緯度 1 度の長さ (km)。経度は緯度の余弦で縮める
 
 export type Vec3 = readonly [number, number, number];
 
@@ -29,6 +30,14 @@ export function smoothstep(edge0: number, edge1: number, x: number): number {
 
 export function dot(a: Vec3, b: Vec3): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+// 経度と緯度から、地球の中心を原点とした単位ベクトル。globe.ts の lonLatToVector3 (Three.js 版) と同じ座標系で、
+// 球のテクスチャの左端 (u=0) が経度 -180 度にあたる
+export function lonLatToUnit(lon: number, lat: number): Vec3 {
+  const phi = (lon + 180) * DEG;
+  const theta = (90 - lat) * DEG;
+  return [-Math.cos(phi) * Math.sin(theta), Math.cos(theta), Math.sin(phi) * Math.sin(theta)];
 }
 
 // a から b へ大円に沿って向かうときの、a での方角 (度。0 が北、90 が東、0 以上 360 未満)

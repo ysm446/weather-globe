@@ -1,6 +1,6 @@
 // 地域ビューのカメラの計算。地表の 1 点を画面の中心に置き、そこを軸に斜めから見下ろす。
 // 画面の計算から切り離して検証できるよう、Three.js に依存しない。座標は globe.ts の lonLatToVector3 と同じ
-import { clamp, DEG, wrapDegrees, type LonLat, type Vec3 } from './math.ts';
+import { clamp, DEG, lonLatToUnit, wrapDegrees, type LonLat, type Vec3 } from './math.ts';
 
 export interface RegionView extends LonLat {
   heading: number; // 見ている方角。0 が北、90 が東
@@ -42,7 +42,7 @@ export function regionPose(view: RegionView): { position: Vec3; target: Vec3; up
   const phi = (view.lon + 180) * DEG;
   const theta = (90 - view.lat) * DEG;
   const [sinPhi, cosPhi, sinTheta, cosTheta] = [Math.sin(phi), Math.cos(phi), Math.sin(theta), Math.cos(theta)];
-  const normal: Vec3 = [-cosPhi * sinTheta, cosTheta, sinPhi * sinTheta];
+  const normal = lonLatToUnit(view.lon, view.lat);
   const north: Vec3 = [cosPhi * cosTheta, sinTheta, -sinPhi * cosTheta];
   const east: Vec3 = [sinPhi, 0, cosPhi];
   const [sinHeading, cosHeading] = [Math.sin(view.heading * DEG), Math.cos(view.heading * DEG)];
@@ -99,11 +99,7 @@ export interface FrameOptions {
 const FRAME_MARGIN = { top: 0.16, bottom: 0.38, side: 0.16 };
 
 export function frameRegionView(points: LonLat[], options: FrameOptions): RegionView {
-  const vectors = points.map(({ lat, lon }) => {
-    const phi = (lon + 180) * DEG;
-    const theta = (90 - lat) * DEG;
-    return [-Math.cos(phi) * Math.sin(theta), Math.cos(theta), Math.sin(phi) * Math.sin(theta)] as Vec3;
-  });
+  const vectors = points.map(({ lat, lon }) => lonLatToUnit(lon, lat));
   const sum = [0, 0, 0];
   for (const v of vectors) for (let i = 0; i < 3; i++) sum[i] += v[i];
   const center = lonLatOf(Math.hypot(...sum) > 1e-9 ? ([sum[0], sum[1], sum[2]] as Vec3) : vectors[0]);

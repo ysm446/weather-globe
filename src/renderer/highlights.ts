@@ -6,10 +6,13 @@ import { EdgeIndex } from './edge-index';
 import { lonLatToVector3 } from './globe';
 import { overlaps, type LabelBox } from './label-layout';
 import {
+  alongKm,
   boundsOf,
   findByName,
   pointNames,
+  progressAlong,
   regionNames,
+  riverLines,
   riverNames,
   unwrapLongitudes,
   type Bounds,
@@ -18,6 +21,8 @@ import {
   type RegionRecord,
   type RiverRecord,
 } from './highlight-data';
+import { easeInOut, KM_PER_DEGREE, wrapDegrees } from './math';
+import { lonLatOf } from './region-camera';
 import { arrowDashCount, arrowFadeShare, buildSplitArrow, defaultArrowWidthKm, type ArrowVertex } from './thick-arrow';
 
 // 地表からの高さ。海岸線 (地域ビューで 1.0007) と同じくらいにし、塗りは線より下に置く
@@ -527,18 +532,6 @@ function buildArrows(lines: { coords: number[]; progress: number[] }[]): THREE.I
   return geometry;
 }
 
-// 線に沿った距離を 0〜1 にする (outline の輪や、座標で渡された線用)
-function progressAlong(coords: number[]): number[] {
-  const out = [0];
-  let total = 0;
-  for (let i = 2; i + 1 < coords.length; i += 2) {
-    const midLat = ((coords[i + 1] + coords[i - 1]) / 2) * (Math.PI / 180);
-    total += Math.hypot((coords[i] - coords[i - 2]) * Math.cos(midLat), coords[i + 1] - coords[i - 1]);
-    out.push(total);
-  }
-  return out.map((d) => (total > 0 ? d / total : 0));
-}
-
 // 範囲の塗り。輪郭のすぐ内側が濃く、内側ほど薄い
 function areaFill(polygons: number[][][], color: THREE.Color): { mesh: THREE.Mesh; material: THREE.ShaderMaterial } {
   const material = new THREE.ShaderMaterial({
@@ -560,8 +553,7 @@ function areaFill(polygons: number[][][], color: THREE.Color): { mesh: THREE.Mes
 // 範囲の輪郭の線。各輪を 1 周で 0〜1 に進める
 // 日付変更線で切られた形 (ロシア、フィジー、南極など) の、切れ目の辺は輪郭として描かない (国境のように光って見えた)
 export function onAntimeridian(lon: number): boolean {
-  const d = (((lon + 180) % 360) + 360) % 360;
-  return d < 1e-6 || d > 360 - 1e-6;
+  return Math.abs(wrapDegrees(lon)) > 180 - 1e-6;
 }
 const isCut = (lon1: number, lon2: number): boolean => onAntimeridian(lon1) && onAntimeridian(lon2);
 
@@ -616,8 +608,7 @@ export function buildFill(polygons: number[][][]): { geometry: THREE.BufferGeome
   // 三角形がたくさんでき、4 つに分けることを繰り返すと細長いものほど数が爆発した (ロシアで頂点が 1,500 万を超えた)。
   // 長い辺だけを切れば、細長い三角形は長さに比例する数にしか増えない
   // 辺の長さは km で測る (高緯度では経度 1 度が短いので、度のままでは必要以上に細かく分けていた)
-  const lengthKm = (p: THREE.Vector2, q: THREE.Vector2): number =>
-    Math.hypot((p.x - q.x) * Math.cos(((p.y + q.y) / 2) * (Math.PI / 180)), p.y - q.y) * 111.2;
+  const lengthKm = (p: THREE.Vector2, q: THREE.Vector2): number => alongKm([p.x, p.y, q.x, q.y])[1];
   const subdivide = (a: THREE.Vector2, b: THREE.Vector2, c: THREE.Vector2, depth: number): void => {
     const ab = lengthKm(a, b);
     const bc = lengthKm(b, c);
@@ -625,9 +616,9 @@ export function buildFill(polygons: number[][][]): { geometry: THREE.BufferGeome
     const longest = Math.max(ab, bc, ca);
     // 内側の三角形 (どの頂点も輪郭から十分離れている) は大きいままでよい
     const interior =
-      longest <= MAX_INTERIOR_TRIANGLE_DEG * 111.2 &&
+      longest <= MAX_INTERIOR_TRIANGLE_DEG * KM_PER_DEGREE &&
       Math.min(distanceAt(a.x, a.y), distanceAt(b.x, b.y), distanceAt(c.x, c.y)) - longest > INTERIOR_KM;
-    if (longest <= MAX_TRIANGLE_DEG * 111.2 || interior || depth > 40) {
+    if (longest <= MAX_TRIANGLE_DEG * KM_PER_DEGREE || interior || depth > 40) {
       push(a.x, a.y);
       push(b.x, b.y);
       push(c.x, c.y);
@@ -752,8 +743,6 @@ interface Item {
   leaving: boolean;
 }
 
-const easeInOut = (t: number): number => t * t * (3 - 2 * t);
-
 const PREVIEW_FADE_IN_SECONDS = 0.25; // 下見の線 (地形の名前の川にマウスを乗せたとき) の現れ方と消え方
 const PREVIEW_FADE_OUT_SECONDS = 0.35;
 
@@ -822,14 +811,8 @@ export class Highlights {
       if (item.leaving) continue;
       for (const label of item.labels) {
         if (!label.frame) continue;
-        for (const point of label.points) {
-          const length = point.length();
-          // globe.ts の lonLatToVector3 の逆 (region-camera.ts の lonLatOf と同じ式)
-          out.push({
-            lat: (Math.asin(point.y / length) * 180) / Math.PI,
-            lon: ((((Math.atan2(point.z, -point.x) * 180) / Math.PI - 180 + 540) % 360) - 180),
-          });
-        }
+        // globe.ts の lonLatToVector3 の逆
+        for (const point of label.points) out.push(lonLatOf([point.x, point.y, point.z]));
       }
     }
     return out;
@@ -1018,18 +1001,7 @@ export class Highlights {
     if (spec.type === 'river') {
       const river = findByName(await this.loadRivers(), spec.name, riverNames);
       if (!river) return null;
-      const lines = river.l.map((line) => {
-        const coords = unwrapLongitudes(line.slice(1));
-        // 各点の源流からの距離を、線の始点の距離に線に沿った長さを足して求める
-        const along = progressAlong(coords);
-        let length = 0;
-        for (let i = 2; i + 1 < coords.length; i += 2) {
-          const midLat = ((coords[i + 1] + coords[i - 1]) / 2) * (Math.PI / 180);
-          length += Math.hypot((coords[i] - coords[i - 2]) * Math.cos(midLat), coords[i + 1] - coords[i - 1]) * 111.2;
-        }
-        const progress = along.map((t) => Math.min(1, (line[0] + t * length) / Math.max(river.L, 1)));
-        return { coords, progress };
-      });
+      const lines = riverLines(river);
       // 川は流れる光で向きが分かるので、arrows を指定されても矢印は描かない
       addRibbon(lines, lineColor, RIVER_WIDTH_PX, RIVER_REVEAL_SECONDS, RIVER_HEAD, false, 'wave');
       const candidates = lineCandidates(lines);

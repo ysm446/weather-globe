@@ -10,6 +10,7 @@ import { stepFade } from './fade';
 import { moonlightStrength } from './astro';
 import { CLOUD_SUN_COLOR_GLSL, FULLSCREEN_VS, MOONLIGHT_GLSL, VALUE_NOISE_GLSL } from './glsl';
 import { createWireOverlay } from './globe';
+import { EARTH_RADIUS_KM } from './camera-readout';
 import { easeInOut } from './math';
 import { POPULATION_GLSL, POPULATION_STYLE_CODES } from './population';
 import type { RegionDetail } from './region-detail';
@@ -53,7 +54,6 @@ const GLOW_MAP_TAPS = 8; // 縮小画像の 1 画素に、元の画像の 8×8 �
 const GLOW_FAR_LOD = 2; // 1 画素が約 160km
 const GLOW_BRIGHTNESS = 0.6; // 設定が 100% のときの明るさ。にじみのしきい値 (2.6) より十分低くし、白く飛ばさない
 const GLOW_MAX_PATH = 2; // 斜めに見るほど大気を長く通って強くにじむ。真上から見たときに対する上限
-const EARTH_RADIUS_KM = 6371;
 const POPULATION_DIMS_CITY_LIGHTS = 0.85; // 人口の分布を出している間、街明かりを弱める割合。どちらも橙〜白で見分けにくい
 
 // 街明かりの描画と同じ式で、街明かりの画像から光だけを取り出して縮小する

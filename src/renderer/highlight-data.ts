@@ -1,6 +1,7 @@
 // ツアーのハイライトのデータ (Natural Earth の川と、山脈・砂漠などの範囲) の検索と、範囲の計算。
 // 描画 (highlights.ts) から切り離して検証できるよう、Three.js に依存しない。
 // データは scripts/build-highlights.mjs で作る。座標はすべて [lon, lat, lon, lat, ...] の平らな並び
+import { DEG, KM_PER_DEGREE, wrapDegrees } from './math.ts';
 
 // 川。l は線ごとの [始点の源流からの距離 (km), lon, lat, ...]、L は源流から河口までの長さ (km)
 export interface RiverRecord {
@@ -111,6 +112,39 @@ export function unwrapLongitudes(coords: number[], start = 0): number[] {
   return out;
 }
 
+// 線 ([lon, lat, ...]。経度は続けたもの) の各点までの、線に沿った長さ (km)。経度の差は 2 点の中間の緯度で縮める
+export function alongKm(coords: number[]): number[] {
+  const out = [0];
+  for (let i = 2; i + 1 < coords.length; i += 2) {
+    const midLat = ((coords[i + 1] + coords[i - 1]) / 2) * DEG;
+    out.push(out[out.length - 1] + Math.hypot((coords[i] - coords[i - 2]) * Math.cos(midLat), coords[i + 1] - coords[i - 1]) * KM_PER_DEGREE);
+  }
+  return out;
+}
+
+// 線に沿った距離を 0〜1 にする (輪郭の輪や、座標で渡された線用)
+export function progressAlong(coords: number[]): number[] {
+  const along = alongKm(coords);
+  const total = along[along.length - 1];
+  return along.map((km) => (total > 0 ? km / total : 0));
+}
+
+// 川の線。coords は [lon, lat, ...] (経度は続けたもの)、progress は各点の源流からの距離 (0〜1)
+export interface RiverLine {
+  coords: number[];
+  progress: number[];
+}
+
+// 川の線ごとに、各点の源流からの距離 (0〜1) を求める。線の先頭の値 (源流からの距離 km) に線に沿った長さを足し、
+// 川全体の長さで割る。ツアーのハイライトと地形の名前 (クリックで描く線) で共通
+export function riverLines(river: RiverRecord): RiverLine[] {
+  return river.l.map((line) => {
+    const coords = unwrapLongitudes(line.slice(1));
+    const progress = alongKm(coords).map((km) => Math.min(1, (line[0] + km) / Math.max(river.L, 1)));
+    return { coords, progress };
+  });
+}
+
 // 平らな座標の並びをいくつか受け取り、全体を囲む範囲を返す。start は各並びで座標が始まる位置
 export function boundsOf(lists: number[][], start = 0): Bounds {
   let south = Infinity;
@@ -118,7 +152,7 @@ export function boundsOf(lists: number[][], start = 0): Bounds {
   const lons: number[] = [];
   for (const list of lists) {
     for (let i = start; i + 1 < list.length; i += 2) {
-      lons.push(((((list[i] + 180) % 360) + 360) % 360) - 180);
+      lons.push(wrapDegrees(list[i]));
       south = Math.min(south, list[i + 1]);
       north = Math.max(north, list[i + 1]);
     }

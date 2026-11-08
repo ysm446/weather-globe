@@ -1,7 +1,8 @@
 // 矢印キーで次の都市を選ぶ計算の検証。実行: node --test tests/city-hop.test.ts
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bearingDegrees, pickCityInDirection } from '../src/renderer/city-hop.ts';
+import { pickCityInDirection } from '../src/renderer/city-hop.ts';
+import { bearingDegrees } from '../src/renderer/math.ts';
 
 const tokyo = { name: '東京', lat: 35.68, lon: 139.69 };
 const sendai = { name: '仙台', lat: 38.27, lon: 140.87 };
