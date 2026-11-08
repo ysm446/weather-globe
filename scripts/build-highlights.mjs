@@ -228,7 +228,9 @@ function buildRegions(file) {
       .filter((rings) => rings.length > 0);
     if (p2.length === 0) continue;
     // 英語名は大文字のものがあるので、NAME_EN を優先する
-    regions.push({ n: (p.NAME_EN || p.NAME).trim(), ja: (p.NAME_JA || '').trim(), c: p.FEATURECLA, r: p.SCALERANK, p: p2 });
+    const region = { n: (p.NAME_EN || p.NAME).trim(), ja: (p.NAME_JA || '').trim(), c: p.FEATURECLA, r: p.SCALERANK, p: p2 };
+    if (p.WIKIDATAID) region.w = p.WIKIDATAID; // 詳しい情報を引くのに使う (scripts/build-terrain-info.mjs)
+    regions.push(region);
   }
   return regions.sort((a, b) => a.r - b.r);
 }
@@ -392,6 +394,7 @@ function buildPoints(files) {
         y: round(lat),
         r: p.scalerank,
         k: country ? [country.a3] : [],
+        ...(p.wikidataid ? { w: p.wikidataid } : {}), // 詳しい情報を引くのに使う (scripts/build-terrain-info.mjs)
       });
     }
   }

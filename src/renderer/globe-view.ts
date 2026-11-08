@@ -1334,8 +1334,8 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
   const LAKE_OUTLINE_COLOR = '#96cdff'; // 湖の名前 (.terrain-label.lake) と同じ水色
   const hoverPointer = { x: -1, y: -1, inside: false, pressed: false };
   let riverPress: { x: number; y: number } | null = null;
-  // 描いている川か湖。湖の形は読み込みを待つので、待つ間に選び直されたら描かない
-  let selectedFeature: { kind: 'river' | 'lake'; key: string } | null = null;
+  // 描いている川、湖、範囲。湖の形は読み込みを待つので、待つ間に選び直されたら描かない
+  let selectedFeature: { kind: 'river' | 'lake' | 'region'; key: string } | null = null;
   renderer.domElement.addEventListener('pointermove', (event) => {
     hoverPointer.x = event.clientX;
     hoverPointer.y = event.clientY;
@@ -1353,7 +1353,8 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     riverPress = null;
     if (!press || event.button !== 0) return;
     if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > RIVER_CLICK_SLOP_PX) return;
-    const hit = terrainLabels.pickAt(event.clientX, event.clientY);
+    const picked = terrainLabels.pickAt(event.clientX, event.clientY);
+    const hit = picked?.kind === 'peak' ? null : picked; // 山の頂は札を出すだけで、クリックでは何も描かない
     if (!hit || (hit.kind === selectedFeature?.kind && hit.key === selectedFeature.key)) {
       selectedFeature = null;
       highlights.setPreview(null);
@@ -1364,6 +1365,10 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     // 同じ名前の川と湖を区別するため、種類を付けて下見を見分ける
     if (hit.kind === 'river') {
       highlights.setPreview(`river:${hit.key}`, hit.lines);
+      return;
+    }
+    if (hit.kind === 'region') {
+      highlights.setAreaPreview(`region:${hit.key}`, hit.polygons, hit.color);
       return;
     }
     void terrainLabels.lakeShape(hit.key).then((shape) => {
@@ -1727,8 +1732,20 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     countryLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes], apparentAltitude(), highlights.activeCountries());
     terrainLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes, ...countryLabels.shownBoxes()], apparentAltitude());
     const hovered = hoverPointer.inside && !hoverPointer.pressed ? terrainLabels.pickAt(hoverPointer.x, hoverPointer.y) : null;
-    infoCard.update(hovered ? { kind: hovered.kind, key: hovered.key, box: hovered.box } : null, performance.now());
-    const cursor = hovered ? 'pointer' : '';
+    infoCard.update(
+      hovered
+        ? {
+            kind: hovered.kind,
+            key: hovered.key,
+            name: hovered.name,
+            box: hovered.box,
+            category: hovered.kind === 'region' ? hovered.category : undefined,
+            color: hovered.kind === 'region' ? hovered.color : undefined,
+          }
+        : null,
+      performance.now(),
+    );
+    const cursor = hovered && hovered.kind !== 'peak' ? 'pointer' : ''; // 山の頂は押しても何も描かない
     if (renderer.domElement.style.cursor !== cursor) renderer.domElement.style.cursor = cursor;
   }
 

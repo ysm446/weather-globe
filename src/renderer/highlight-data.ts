@@ -20,6 +20,7 @@ export interface RegionRecord {
   r: number;
   p: number[][][];
   k: string[]; // 重なる国 (ADM0_A3)。重なりの大きい順
+  w?: string; // Wikidata の ID (詳しい情報は data/region-info.json)
 }
 
 // 点。山頂など (標高点) と、滝・岬・島などの代表点。c は種類 (mountain, waterfall, cape, island など)、
@@ -34,6 +35,7 @@ export interface PointRecord {
   y: number;
   r: number;
   k: string[];
+  w?: string; // Wikidata の ID (山の頂の詳しい情報は data/peak-info.json)
 }
 
 // 国。x, y は国名を置くのに適した点 (経度、緯度)、f は国旗のファイル名 (国コードの小文字。ないときは空)

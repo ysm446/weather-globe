@@ -53,6 +53,14 @@ const LAKE_RANK_BY_ALTITUDE: [number, number][] = [
   [0.09, 8],
   [0, 9],
 ];
+// 範囲をクリックしたときに描く輪郭の色。地球の上の名前の色 (style.css の .terrain-label.desert など) と同じ
+const REGION_OUTLINE_COLORS: Record<(typeof REGION_GROUPS)[string], string> = {
+  desert: '#f0cd8c',
+  mountain: '#e1af87',
+  plateau: '#dcc3a0',
+  lowland: '#afd796',
+  cold: '#b9d7e6',
+};
 const RIVER_CANDIDATES = 80; // 川の名前を置く候補の点の数 (同じ名前の線をまとめて)
 const RIVER_KEEP_RATIO = 0.6; // 今の点より画面の中心にこれだけ近い点が見つかったときだけ、名前を動かす (ちらつかないように)
 const SCREEN_MARGIN_X = 0.06; // 川の名前を置く点は、画面の端からこの割合より内側にする
@@ -107,7 +115,13 @@ interface TerrainLabel {
   peak: boolean;
   candidates: THREE.Vector3[] | null; // 川の名前を置く候補の点。範囲、湖、山の頂は null
   lines: RiverLine[] | null; // 川の線 (クリックしたときに描く)。川のほかは null (湖の形は lakeShape で引く)
-  key: string; // 名前 (川の下見の線と湖の形を区別する)
+  polygons: number[][][] | null; // 範囲の形 (クリックしたときに描く)。範囲のほかは null
+  color: string; // 範囲の輪郭の色
+  key: string; // 川と湖は名前、範囲と山の頂は Wikidata の ID (同じ名前の別の山脈がある。なければ名前)
+  name: string; // 出している名前
+  group: (typeof REGION_GROUPS)[string] | null; // 範囲の色分けの組
+  category: string; // 範囲の種類 (Natural Earth の FEATURECLA。Range/mtn など)
+  elevation: number | null; // 山の頂の標高 (m。Natural Earth の値)
   current: number; // 川の名前を今置いている候補 (-1 は置いていない)
   element: HTMLElement;
   world: THREE.Vector3;
@@ -122,10 +136,12 @@ function rankAt(table: [number, number][], altitude: number): number {
   return (table.find(([min]) => altitude >= min) ?? table[table.length - 1])[1];
 }
 
-// マウスの下にある名前。川は線、湖は形をあとで引く (lakeShape)
+// マウスの下にある名前。川は線、湖は形をあとで引く (lakeShape)、範囲は形を持つ。山の頂は札を出すだけでクリックしない
 export type TerrainPick =
-  | { kind: 'river'; key: string; lines: RiverLine[]; box: LabelBox }
-  | { kind: 'lake'; key: string; box: LabelBox };
+  | { kind: 'river'; key: string; name: string; lines: RiverLine[]; box: LabelBox }
+  | { kind: 'lake'; key: string; name: string; box: LabelBox }
+  | { kind: 'region'; key: string; name: string; polygons: number[][][]; color: string; category: string; box: LabelBox }
+  | { kind: 'peak'; key: string; name: string; elevation: number | null; box: LabelBox };
 
 export class TerrainLabels {
   private labels: TerrainLabel[] = [];
@@ -161,7 +177,14 @@ export class TerrainLabels {
       element.className = `terrain-label ${REGION_GROUPS[region.c]} rank-${Math.min(region.r, 4)} off`;
       element.textContent = region.ja || region.n;
       const { lon, lat } = labelPoint(region.p);
-      labels.push(this.makeLabel(element, lon, lat, region.r, 'region'));
+      const label = this.makeLabel(element, lon, lat, region.r, 'region');
+      label.polygons = region.p;
+      label.color = REGION_OUTLINE_COLORS[REGION_GROUPS[region.c]];
+      label.key = region.w ?? `region:${region.n}:${region.r}`;
+      label.name = region.ja || region.n;
+      label.group = REGION_GROUPS[region.c];
+      label.category = region.c;
+      labels.push(label);
     }
     // 川。区間ごとに英語名が分かれている川 (Rhine と Rhein など) は、同じ日本語名で 1 つにまとめる
     const riverNames = riverNameModule.default as unknown as Record<string, string>;
@@ -190,6 +213,7 @@ export class TerrainLabels {
       label.candidates = candidates;
       label.lines = group.lines;
       label.key = ja;
+      label.name = ja;
       labels.push(label);
     }
     for (const lake of lakeModule.default as unknown as LakeRecord[]) {
@@ -198,6 +222,7 @@ export class TerrainLabels {
       element.textContent = lake.ja;
       const label = this.makeLabel(element, lake.x, lake.y, lake.r, 'lake');
       label.key = lake.ja;
+      label.name = lake.ja;
       labels.push(label);
     }
     for (const peak of peaks) {
@@ -213,7 +238,11 @@ export class TerrainLabels {
         elevation.textContent = `${peak.e.toLocaleString('ja-JP')}m`;
         element.append(elevation);
       }
-      labels.push(this.makeLabel(element, peak.x, peak.y, peak.r, 'peak'));
+      const label = this.makeLabel(element, peak.x, peak.y, peak.r, 'peak');
+      label.key = peak.w ?? `peak:${peak.n}:${peak.x},${peak.y}`;
+      label.name = peak.ja || peak.n;
+      label.elevation = peak.e;
+      labels.push(label);
     }
     // 重要な地形を先に置く。同じ重要度なら範囲を山の頂より先に
     labels.sort((a, b) => a.rank - b.rank || Number(a.peak) - Number(b.peak));
@@ -228,7 +257,13 @@ export class TerrainLabels {
       peak: kind === 'peak',
       candidates: null,
       lines: null,
+      polygons: null,
+      color: '',
       key: '',
+      name: '',
+      group: null,
+      category: '',
+      elevation: null,
       current: -1,
       element,
       world: lonLatToVector3(lon, lat, this.radius),
@@ -268,8 +303,8 @@ export class TerrainLabels {
     return best;
   }
 
-  // 画面の点 (x, y) にある、出ている川か湖の名前。マウスを乗せた名前を明るくし、クリックで川の線や湖の形を描くのに使う。
-  // 名前の少し外側まで反応させる
+  // 画面の点 (x, y) にある、出ている名前。マウスを乗せた名前を明るくし、札を出したり、クリックで川の線や湖と範囲の形を
+  // 描いたりするのに使う。名前の少し外側まで反応させる。重なっているときは先に置いた (重要な) 名前を選ぶ
   pickAt(x: number, y: number): TerrainPick | null {
     if (this.container.hidden) return null;
     const pad = 4;
@@ -277,15 +312,24 @@ export class TerrainLabels {
     for (const label of this.labels) {
       const box = label.box;
       const hit =
-        (label.kind === 'river' || label.kind === 'lake') && label.shown && box !== null &&
+        label.shown && box !== null &&
         x >= box.x - pad && x <= box.x + box.width + pad && y >= box.y - pad && y <= box.y + box.height + pad;
       if (hit && !found) found = label;
       label.element.classList.toggle('hover', hit && found === label);
     }
     if (!found) return null;
-    return found.kind === 'river'
-      ? { kind: 'river', key: found.key, lines: found.lines!, box: found.box! }
-      : { kind: 'lake', key: found.key, box: found.box! };
+    const { key, name } = found;
+    const box = found.box!;
+    switch (found.kind) {
+      case 'river':
+        return { kind: 'river', key, name, lines: found.lines!, box };
+      case 'lake':
+        return { kind: 'lake', key, name, box };
+      case 'region':
+        return { kind: 'region', key, name, polygons: found.polygons!, color: found.color, category: found.category, box };
+      case 'peak':
+        return { kind: 'peak', key, name, elevation: found.elevation, box };
+    }
   }
 
   // 湖の形 (輪の並び。輪は平らな [lon, lat, ...])。形のデータは初めて使うときに読み込む

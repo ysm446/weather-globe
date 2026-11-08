@@ -384,6 +384,11 @@ button.city-label:active {
 }
 
 /* マウスを乗せた川の名前。線と一緒に明るくする */
+/* 範囲と山の頂は色を変えず、明るくする */
+.terrain-label.hover {
+  filter: brightness(1.45);
+}
+
 .terrain-label.river.hover,
 .terrain-label.lake.hover {
   color: #d6ecff;

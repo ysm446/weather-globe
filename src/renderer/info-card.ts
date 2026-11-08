@@ -1,6 +1,7 @@
-// 地球の上の名前 (川と湖) にマウスを乗せたときに出す、詳しい情報の札。
-// データは scripts/build-river-info.mjs と build-lake-info.mjs で作った data/river-info.json と lake-info.json
-// (Wikidata と日本語版 Wikipedia)。種類ごとに、初めて出すときに読み込む。名前は毎フレーム動くので、札も毎フレーム名前の位置に合わせる
+// 地球の上の名前 (川、湖、山脈などの範囲、山の頂) にマウスを乗せたときに出す、詳しい情報の札。
+// データは scripts/build-river-info.mjs、build-lake-info.mjs、build-terrain-info.mjs で作った data/river-info.json、
+// lake-info.json (日本語名がキー)、region-info.json、peak-info.json (Wikidata の ID がキー)。出典は Wikidata と日本語版 Wikipedia。
+// 種類ごとに、初めて出すときに読み込む。名前は毎フレーム動くので、札も毎フレーム名前の位置に合わせる
 import type { LabelBox } from './label-layout';
 
 const SHOW_DELAY_MS = 300; // 地球を回す途中で名前の上を通っただけでは出さない
@@ -32,13 +33,55 @@ export interface LakeInfo {
   wiki?: string;
 }
 
-export type InfoKind = 'river' | 'lake';
+export interface RegionInfo {
+  qid: string;
+  area_km2?: number;
+  length_km?: number;
+  highest?: string; // 最高地点の名前
+  highest_m?: number; // 最高地点の標高
+  countries?: string[];
+  summary?: string;
+  wiki?: string;
+}
+
+export interface PeakInfo {
+  qid: string;
+  elevation_m?: number;
+  prominence_m?: number; // 独立標高
+  range?: string; // 属する山脈
+  countries?: string[];
+  first_ascent?: number; // 初登頂の年
+  summary?: string;
+  wiki?: string;
+}
+
+export type InfoKind = 'river' | 'lake' | 'region' | 'peak';
 
 export interface InfoTarget {
   kind: InfoKind;
-  key: string; // 日本語名
+  key: string; // データを引く鍵。川と湖は日本語名、範囲と山の頂は Wikidata の ID
+  name: string; // 札の見出し
   box: LabelBox; // 名前の画面上の範囲
+  category?: string; // 範囲の種類 (Natural Earth の FEATURECLA)
+  color?: string; // 見出しの色 (範囲は地球の上の名前と同じ色)
 }
+
+// 範囲の種類 (Natural Earth の FEATURECLA) の日本語
+const REGION_CATEGORY: Record<string, string> = {
+  'Range/mtn': '山脈',
+  Foothills: '丘陵',
+  Gorge: '峡谷',
+  Valley: '谷',
+  Plateau: '高原',
+  Plain: '平野',
+  Basin: '盆地',
+  Lowland: '低地',
+  Delta: '三角州',
+  Wetlands: '湿地',
+  Depression: 'くぼ地',
+  Tundra: 'ツンドラ',
+  Desert: '砂漠',
+};
 
 const numberText = (value: number): string => value.toLocaleString('ja-JP');
 
@@ -67,6 +110,29 @@ export function lakeFacts(info: LakeInfo): [string, string][] {
   return facts;
 }
 
+export function regionFacts(info: RegionInfo, category?: string): [string, string][] {
+  const facts: [string, string][] = [];
+  const kind = category ? REGION_CATEGORY[category] : undefined;
+  if (kind) facts.push(['種類', kind]);
+  if (info.area_km2 !== undefined) facts.push(['面積', `${largeNumberText(info.area_km2)} km²`]);
+  if (info.length_km !== undefined) facts.push(['長さ', `${numberText(info.length_km)} km`]);
+  if (info.highest) {
+    facts.push(['最高地点', info.highest_m !== undefined ? `${info.highest} (${numberText(info.highest_m)} m)` : info.highest]);
+  }
+  if (info.countries?.length) facts.push(['国', listText(info.countries)]);
+  return facts;
+}
+
+export function peakFacts(info: PeakInfo): [string, string][] {
+  const facts: [string, string][] = [];
+  if (info.elevation_m !== undefined) facts.push(['標高', `${numberText(info.elevation_m)} m`]);
+  if (info.prominence_m !== undefined) facts.push(['独立標高', `${numberText(info.prominence_m)} m`]);
+  if (info.range) facts.push(['山脈', info.range]);
+  if (info.countries?.length) facts.push(['国', listText(info.countries)]);
+  if (info.first_ascent !== undefined) facts.push(['初登頂', `${info.first_ascent}年`]);
+  return facts;
+}
+
 export function riverFacts(info: RiverInfo): [string, string][] {
   const facts: [string, string][] = [];
   if (info.length_km !== undefined) facts.push(['長さ', `${numberText(info.length_km)} km`]);
@@ -79,10 +145,12 @@ export function riverFacts(info: RiverInfo): [string, string][] {
 
 export class InfoCard {
   private readonly element: HTMLElement;
-  private readonly data: { river: Record<string, RiverInfo> | null; lake: Record<string, LakeInfo> | null } = {
-    river: null,
-    lake: null,
-  };
+  private readonly data: {
+    river: Record<string, RiverInfo> | null;
+    lake: Record<string, LakeInfo> | null;
+    region: Record<string, RegionInfo> | null;
+    peak: Record<string, PeakInfo> | null;
+  } = { river: null, lake: null, region: null, peak: null };
   private readonly loading: Partial<Record<InfoKind, Promise<void>>> = {};
   private pendingKey: string | null = null; // 乗せてから出すまで待っている名前
   private pendingSince = 0;
@@ -97,15 +165,36 @@ export class InfoCard {
   }
 
   private load(kind: InfoKind): Promise<void> {
-    this.loading[kind] ??=
-      kind === 'river'
-        ? import('./data/river-info.json').then((module) => {
-            this.data.river = module.default as unknown as Record<string, RiverInfo>;
-          })
-        : import('./data/lake-info.json').then((module) => {
-            this.data.lake = module.default as unknown as Record<string, LakeInfo>;
-          });
+    const imports: Record<InfoKind, () => Promise<void>> = {
+      river: () => import('./data/river-info.json').then((m) => void (this.data.river = m.default as unknown as Record<string, RiverInfo>)),
+      lake: () => import('./data/lake-info.json').then((m) => void (this.data.lake = m.default as unknown as Record<string, LakeInfo>)),
+      region: () => import('./data/region-info.json').then((m) => void (this.data.region = m.default as unknown as Record<string, RegionInfo>)),
+      peak: () => import('./data/peak-info.json').then((m) => void (this.data.peak = m.default as unknown as Record<string, PeakInfo>)),
+    };
+    this.loading[kind] ??= imports[kind]();
     return this.loading[kind];
+  }
+
+  // 札に出す事実の並びと説明。データがなければ null
+  private content(target: InfoTarget): { facts: [string, string][]; summary?: string } | null {
+    switch (target.kind) {
+      case 'river': {
+        const info = this.data.river?.[target.key];
+        return info ? { facts: riverFacts(info), summary: info.summary } : null;
+      }
+      case 'lake': {
+        const info = this.data.lake?.[target.key];
+        return info ? { facts: lakeFacts(info), summary: info.summary } : null;
+      }
+      case 'region': {
+        const info = this.data.region?.[target.key];
+        return info ? { facts: regionFacts(info, target.category), summary: info.summary } : null;
+      }
+      case 'peak': {
+        const info = this.data.peak?.[target.key];
+        return info ? { facts: peakFacts(info), summary: info.summary } : null;
+      }
+    }
   }
 
   // 毎フレーム呼ぶ。target はマウスの下の名前 (なければ null)
@@ -124,20 +213,19 @@ export class InfoCard {
         void this.load(target.kind); // 待っている間に読み込んでおく
       }
       if (now - this.pendingSince < SHOW_DELAY_MS) return;
-      const river = target.kind === 'river' ? this.data.river?.[target.key] : undefined;
-      const lake = target.kind === 'lake' ? this.data.lake?.[target.key] : undefined;
-      const info = river ?? lake;
-      if (!info) return;
-      this.render(target.kind, target.key, river ? riverFacts(river) : lakeFacts(lake!), info.summary);
+      const content = this.content(target);
+      if (!content) return;
+      this.render(target, content.facts, content.summary);
       this.shownKey = id;
     }
     this.place(target.box);
   }
 
-  private render(kind: InfoKind, name: string, items: [string, string][], summaryText: string | undefined): void {
+  private render(target: InfoTarget, items: [string, string][], summaryText: string | undefined): void {
     const title = document.createElement('div');
-    title.className = `info-card-title ${kind}`;
-    title.textContent = name;
+    title.className = `info-card-title ${target.kind}`;
+    title.textContent = target.name;
+    title.style.color = target.color ?? '';
     const facts = document.createElement('dl');
     facts.className = 'info-card-facts';
     for (const [term, value] of items) {
