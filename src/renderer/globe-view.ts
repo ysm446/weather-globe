@@ -23,6 +23,7 @@ import { HeadingTape, type TapeMarker } from './heading-tape';
 import { stepFade } from './fade';
 import { Highlights, type HighlightSpec } from './highlights';
 import { CountryLabels } from './country-labels';
+import { InfoCard } from './info-card';
 import { TerrainLabels } from './terrain-labels';
 import { TourCaption } from './tour-caption';
 import { TourPlayer, type TourScene } from './tour';
@@ -566,6 +567,7 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
   const countryLabels = new CountryLabels(el('country-labels'), EARTH_SURFACE_RADIUS);
   let terrainLabelsEnabled = false;
   const terrainLabels = new TerrainLabels(el('terrain-labels'), EARTH_SURFACE_RADIUS);
+  const infoCard = new InfoCard(document.body); // 川の名前に乗せたときの詳しい情報
   const cameraPanel = new CameraPanel(camera, GLOBE_RADIUS);
   const scaleBar = new ScaleBar(camera, GLOBE_RADIUS);
   let scaleBarEnabled = true; // 設定の show_scale_bar
@@ -1709,6 +1711,7 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     countryLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes], apparentAltitude(), highlights.activeCountries());
     terrainLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes, ...countryLabels.shownBoxes()], apparentAltitude());
     const hoveredRiver = hoverPointer.inside && !hoverPointer.pressed ? terrainLabels.riverAt(hoverPointer.x, hoverPointer.y) : null;
+    infoCard.update(hoveredRiver ? { kind: 'river', key: hoveredRiver.key, box: hoveredRiver.box } : null, performance.now());
     const cursor = hoveredRiver ? 'pointer' : '';
     if (renderer.domElement.style.cursor !== cursor) renderer.domElement.style.cursor = cursor;
   }
