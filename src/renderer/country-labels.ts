@@ -33,6 +33,7 @@ export function rankAtAltitude(altitude: number): number {
 export class CountryLabels {
   private labels: CountryLabel[] = [];
   private loading: Promise<void> | null = null;
+  private shapes: Promise<Record<string, number[][][]>> | null = null;
 
   constructor(
     private readonly container: HTMLElement,
@@ -90,6 +91,14 @@ export class CountryLabels {
       label.element.classList.toggle('hover', hit && found === label);
     }
     return found ? { a3: found.country.a3, name: found.country.ja || found.country.n, box: found.box! } : null;
+  }
+
+  // 国の形 (輪の並び。輪は平らな [lon, lat, ...])。形のデータは初めて使うときに読み込む
+  async countryShape(a3: string): Promise<number[][][] | null> {
+    this.shapes ??= import('./data/country-shapes-10m.json').then(
+      (module) => module.default as unknown as Record<string, number[][][]>,
+    );
+    return (await this.shapes)[a3] ?? null;
   }
 
   shownBoxes(): LabelBox[] {

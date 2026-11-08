@@ -1328,16 +1328,17 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     if (cruiseBank && turnRate !== 0) camera.rotateZ((-turnRate / TURN_DEGREES_PER_SECOND) * BANK_DEGREES * THREE.MathUtils.DEG2RAD);
   }
 
-  // 地形の名前の川をクリックすると、その川の線を描き、湖をクリックすると、その湖の形を描く。
+  // 地形の名前の川をクリックすると、その川の線を描き、湖、山脈などの範囲、国名をクリックすると、その形を描く。
   // もう一度クリックするか、ほかの所をクリックするか、Esc で消す。
   // 名前はマウスを素通りさせ (ドラッグを妨げない)、マウスの位置が名前の範囲に入っているかを確かめる。
   // マウスを乗せている間は名前を明るくし、カーソルを指の形にする。押してから離すまでに動いたものはクリックとしない
   const RIVER_CLICK_SLOP_PX = 5;
   const LAKE_OUTLINE_COLOR = '#96cdff'; // 湖の名前 (.terrain-label.lake) と同じ水色
+  const COUNTRY_OUTLINE_COLOR = '#b7a5ff'; // 国の領域。地形の色 (水色、茶色、緑) と見分けやすいよう、ツアーの範囲と同じすみれ色
   const hoverPointer = { x: -1, y: -1, inside: false, pressed: false };
   let riverPress: { x: number; y: number } | null = null;
   // 描いている川、湖、範囲。湖の形は読み込みを待つので、待つ間に選び直されたら描かない
-  let selectedFeature: { kind: 'river' | 'lake' | 'region'; key: string } | null = null;
+  let selectedFeature: { kind: 'river' | 'lake' | 'region' | 'country'; key: string } | null = null;
   renderer.domElement.addEventListener('pointermove', (event) => {
     hoverPointer.x = event.clientX;
     hoverPointer.y = event.clientY;
@@ -1361,13 +1362,24 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
       focusPeak(hit.lon, hit.lat);
       return;
     }
-    if (!hit || (hit.kind === selectedFeature?.kind && hit.key === selectedFeature.key)) {
+    // 地形の名前がなければ国名を探す (国名は地形の名前より下に置いている)
+    const country = hit ? null : countryLabels.pickAt(event.clientX, event.clientY);
+    const picked = hit ?? (country ? { kind: 'country' as const, key: country.a3 } : null);
+    if (!picked || (picked.kind === selectedFeature?.kind && picked.key === selectedFeature.key)) {
       selectedFeature = null;
       highlights.setPreview(null);
       return;
     }
-    const selected = { kind: hit.kind, key: hit.key };
+    const selected = { kind: picked.kind, key: picked.key };
     selectedFeature = selected;
+    if (!hit) {
+      void countryLabels.countryShape(picked.key).then((shape) => {
+        if (selectedFeature !== selected) return;
+        highlights.setAreaPreview(`country:${picked.key}`, shape ?? [], COUNTRY_OUTLINE_COLOR);
+        if (shape) focusFeature(samplePoints(shape.map((rings) => rings[0])));
+      });
+      return;
+    }
     // 同じ名前の川と湖を区別するため、種類を付けて下見を見分ける
     // 描いたものの全体が見えるよう、カメラを寄せる
     if (hit.kind === 'river') {
@@ -1799,9 +1811,11 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     countryLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes], apparentAltitude(), highlights.activeCountries());
     terrainLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes, ...countryLabels.shownBoxes()], apparentAltitude());
     const hovered = hoverPointer.inside && !hoverPointer.pressed ? terrainLabels.pickAt(hoverPointer.x, hoverPointer.y) : null;
-    infoCard.update(hoverTarget(hovered), performance.now());
-    // 山の頂は寄れるとき (地域ビュー) だけ押せる
-    const cursor = hovered && (hovered.kind !== 'peak' || canFocus()) ? 'pointer' : '';
+    const infoTarget = hoverTarget(hovered);
+    infoCard.update(infoTarget, performance.now());
+    // 山の頂は寄れるとき (地域ビュー) だけ押せる。国名は押すと領域を描く
+    const pointing = hovered ? hovered.kind !== 'peak' || canFocus() : infoTarget?.kind === 'country';
+    const cursor = pointing ? 'pointer' : '';
     if (renderer.domElement.style.cursor !== cursor) renderer.domElement.style.cursor = cursor;
   }
 
