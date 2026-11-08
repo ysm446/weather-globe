@@ -36,6 +36,14 @@ test('主な湖の数値が大きく外れていない', () => {
   assert.deepEqual(info['ヴィクトリア湖'].outflows, ['白ナイル川']);
 });
 
+test('元データで別の湖の名前が付いていた形は、正しい名前で出す', () => {
+  const names = new Set(lakes.map((lake) => lake.ja));
+  // Natural Earth ではマッジョーレ湖の形にコモ湖、ボルセーナ湖の形にブラッチャーノ湖の名前が付いている (本物の形はない)
+  assert.ok(names.has('マッジョーレ湖') && names.has('ボルセーナ湖'));
+  assert.ok(!names.has('コモ湖') && !names.has('ブラッチャーノ湖'));
+  assert.equal(info['マッジョーレ湖'].qid, 'Q14379');
+});
+
 test('座標が合わず別の湖を指していた ID は使わない', () => {
   // Natural Earth の ID がオンタリオ州の別の湖を指していた
   assert.equal(info['トラウト湖'], undefined);

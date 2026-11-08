@@ -23,6 +23,13 @@ const NAME_OVERRIDES = {
   'Tonlé Sap': 'トンレサップ湖',
   'Issyk-Kul': 'イシク・クル湖',
 };
+// 元データの誤り。名前と Wikidata の ID が別の湖の形に付いているもの。元データの ID → 正しい名前と ID。
+// Natural Earth の 10m の湖には本物のコモ湖とブラッチャーノ湖の形がなく、その名前がマッジョーレ湖とボルセーナ湖の形に付いている。
+// Wikidata の座標がその形の中にあることを確かめた (scripts/build-lake-info.mjs の座標の確認で見つかったもの)
+const FEATURE_FIXES = {
+  Q15523: { name: 'Lago Maggiore', ja: 'マッジョーレ湖', wikidataid: 'Q14379' }, // 元はコモ湖
+  Q896551: { name: 'Lago di Bolsena', ja: 'ボルセーナ湖', wikidataid: 'Q208180' }, // 元はブラッチャーノ湖
+};
 const JA_SUFFIX = /(湖|海|池|沼|潟)$/;
 
 const round = (value) => Math.round(value * 1000) / 1000;
@@ -77,7 +84,8 @@ function boxGapKm(a, b) {
   return Math.hypot(dLon, dLat) * 111.2;
 }
 for (const feature of geo.features) {
-  const p = feature.properties;
+  const fix = FEATURE_FIXES[feature.properties.wikidataid];
+  const p = fix ? { ...feature.properties, name: fix.name, name_en: fix.name, name_ja: fix.ja, wikidataid: fix.wikidataid } : feature.properties;
   const ja = (NAME_OVERRIDES[p.name] ?? (p.name_ja || '')).trim();
   if (!ja || !JA_SUFFIX.test(ja)) continue;
   const polygons = feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates] : feature.geometry.coordinates;
