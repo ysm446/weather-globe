@@ -325,6 +325,10 @@ button.city-label:active {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
+.country-label.hover {
+  color: #fff;
+}
+
 .country-label.off {
   visibility: hidden;
   opacity: 0;
@@ -2369,6 +2373,11 @@ select.native-select {
   padding-top: 8px;
   color: var(--text-2);
   border-top: 1px solid var(--line);
+}
+
+.info-card-hint {
+  margin-top: 8px;
+  color: var(--text-2);
 }
 
 .info-card-source {

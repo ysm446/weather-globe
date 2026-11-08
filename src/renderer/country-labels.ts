@@ -76,6 +76,22 @@ export class CountryLabels {
     });
   }
 
+  // 画面の点 (x, y) にある、出ている国名。マウスを乗せた国名を明るくし、詳しい情報の札を出すのに使う
+  pickAt(x: number, y: number): { a3: string; name: string; box: LabelBox } | null {
+    if (this.container.hidden) return null;
+    const pad = 4;
+    let found: CountryLabel | null = null;
+    for (const label of this.labels) {
+      const box = label.box;
+      const hit =
+        label.shown && box !== null &&
+        x >= box.x - pad && x <= box.x + box.width + pad && y >= box.y - pad && y <= box.y + box.height + pad;
+      if (hit && !found) found = label;
+      label.element.classList.toggle('hover', hit && found === label);
+    }
+    return found ? { a3: found.country.a3, name: found.country.ja || found.country.n, box: found.box! } : null;
+  }
+
   shownBoxes(): LabelBox[] {
     if (this.container.hidden) return [];
     return this.labels.filter((label) => label.shown && label.box).map((label) => label.box as LabelBox);

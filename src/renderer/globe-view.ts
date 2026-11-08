@@ -24,7 +24,7 @@ import { stepFade } from './fade';
 import { Highlights, type HighlightSpec } from './highlights';
 import { CountryLabels } from './country-labels';
 import { samplePoints } from './feature-focus';
-import { InfoCard } from './info-card';
+import { InfoCard, type InfoTarget } from './info-card';
 import { TerrainLabels } from './terrain-labels';
 import { TourCaption } from './tour-caption';
 import { TourPlayer, type TourScene } from './tour';
@@ -569,7 +569,7 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
   const countryLabels = new CountryLabels(el('country-labels'), EARTH_SURFACE_RADIUS);
   let terrainLabelsEnabled = false;
   const terrainLabels = new TerrainLabels(el('terrain-labels'), EARTH_SURFACE_RADIUS);
-  const infoCard = new InfoCard(document.body); // 川と湖の名前に乗せたときの詳しい情報
+  const infoCard = new InfoCard(document.body); // 都市、国、地形の名前に乗せたときの詳しい情報
   const cameraPanel = new CameraPanel(camera, GLOBE_RADIUS);
   const scaleBar = new ScaleBar(camera, GLOBE_RADIUS);
   let scaleBarEnabled = true; // 設定の show_scale_bar
@@ -1508,13 +1508,17 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
   el('marker-label').addEventListener('click', () => {
     if (selectedCity) onSelectCity(selectedCity);
   });
+  // 選んだ都市の地名に乗せたときも、都市のラベルと同じく詳しい情報の札を出す
+  let markerHovered = false;
+  el('marker-label').addEventListener('mouseenter', () => (markerHovered = true));
+  el('marker-label').addEventListener('mouseleave', () => (markerHovered = false));
 
   function placeMarker(name: string, lat: number, lon: number): void {
     const label = el('marker-label');
     label.textContent = name;
     const selectable = selectedCity?.name === name;
     label.classList.toggle('selectable', selectable);
-    label.title = selectable ? `${name}の天気を表示し、視点を戻す` : '';
+    // 説明は詳しい情報の札に出す (markerHovered)
     lonLatToVector3(lon, lat, EARTH_SURFACE_RADIUS, markerPos);
     marker.hidden = false;
     markerShown = true;
@@ -1752,6 +1756,32 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     headingTape.update(view.heading, markers);
   }
 
+  // 詳しい情報の札を出すもの。都市のラベル (ボタン) と選んだ都市の地名、地形の名前、国名の順に探す
+  function hoverTarget(terrain: ReturnType<typeof terrainLabels.pickAt>): InfoTarget | null {
+    const city = cityLabels.hovered();
+    if (city) {
+      return { kind: 'city', key: city.place.name, name: city.place.name, box: city.box, hint: 'クリックでこの都市の天気を表示' };
+    }
+    const markerLabel = el('marker-label');
+    if (markerHovered && markerShown && selectedCity && markerLabel.classList.contains('selectable')) {
+      const rect = markerLabel.getBoundingClientRect();
+      const box = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+      return { kind: 'city', key: selectedCity.name, name: selectedCity.name, box, hint: 'クリックで視点を戻す' };
+    }
+    if (terrain) {
+      return {
+        kind: terrain.kind,
+        key: terrain.key,
+        name: terrain.name,
+        box: terrain.box,
+        category: terrain.kind === 'region' ? terrain.category : undefined,
+        color: terrain.kind === 'region' ? terrain.color : undefined,
+      };
+    }
+    const country = hoverPointer.inside && !hoverPointer.pressed ? countryLabels.pickAt(hoverPointer.x, hoverPointer.y) : null;
+    return country ? { kind: 'country', key: country.a3, name: country.name, box: country.box } : null;
+  }
+
   function updateMarker(): void {
     const point = markerShown && !solar.active ? toScreen(markerPos) : null;
     if (markerShown) {
@@ -1769,19 +1799,7 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     countryLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes], apparentAltitude(), highlights.activeCountries());
     terrainLabels.update(toScreen, [...markerBox, ...highlightBoxes, ...cityBoxes, ...countryLabels.shownBoxes()], apparentAltitude());
     const hovered = hoverPointer.inside && !hoverPointer.pressed ? terrainLabels.pickAt(hoverPointer.x, hoverPointer.y) : null;
-    infoCard.update(
-      hovered
-        ? {
-            kind: hovered.kind,
-            key: hovered.key,
-            name: hovered.name,
-            box: hovered.box,
-            category: hovered.kind === 'region' ? hovered.category : undefined,
-            color: hovered.kind === 'region' ? hovered.color : undefined,
-          }
-        : null,
-      performance.now(),
-    );
+    infoCard.update(hoverTarget(hovered), performance.now());
     // 山の頂は寄れるとき (地域ビュー) だけ押せる
     const cursor = hovered && (hovered.kind !== 'peak' || canFocus()) ? 'pointer' : '';
     if (renderer.domElement.style.cursor !== cursor) renderer.domElement.style.cursor = cursor;

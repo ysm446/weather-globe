@@ -55,15 +55,39 @@ export interface PeakInfo {
   wiki?: string;
 }
 
-export type InfoKind = 'river' | 'lake' | 'region' | 'peak';
+export interface CityInfo {
+  qid: string;
+  country?: string;
+  population?: number;
+  population_year?: number;
+  area_km2?: number;
+  elevation_m?: number;
+  summary?: string;
+  wiki?: string;
+}
+
+export interface CountryInfo {
+  qid: string;
+  capital?: string;
+  population?: number;
+  population_year?: number;
+  area_km2?: number;
+  languages?: string[];
+  currency?: string;
+  summary?: string;
+  wiki?: string;
+}
+
+export type InfoKind = 'river' | 'lake' | 'region' | 'peak' | 'city' | 'country';
 
 export interface InfoTarget {
   kind: InfoKind;
-  key: string; // データを引く鍵。川と湖は日本語名、範囲と山の頂は Wikidata の ID
+  key: string; // データを引く鍵。川、湖、都市は日本語名、範囲と山の頂は Wikidata の ID、国は ADM0_A3
   name: string; // 札の見出し
   box: LabelBox; // 名前の画面上の範囲
   category?: string; // 範囲の種類 (Natural Earth の FEATURECLA)
   color?: string; // 見出しの色 (範囲は地球の上の名前と同じ色)
+  hint?: string; // 札の下に添える操作の案内 (都市は「クリックでこの都市の天気を表示」)
 }
 
 // 範囲の種類 (Natural Earth の FEATURECLA) の日本語
@@ -110,6 +134,31 @@ export function lakeFacts(info: LakeInfo): [string, string][] {
   return facts;
 }
 
+// 人口。1 万以上は万でまとめ、何年の値かを添える
+function populationText(population: number, year?: number): string {
+  const text = population >= 10_000 ? `${largeNumberText(population)}人` : `${numberText(population)}人`;
+  return year ? `${text} (${year}年)` : text;
+}
+
+export function cityFacts(info: CityInfo): [string, string][] {
+  const facts: [string, string][] = [];
+  if (info.country) facts.push(['国', info.country]);
+  if (info.population !== undefined) facts.push(['人口', populationText(info.population, info.population_year)]);
+  if (info.area_km2 !== undefined) facts.push(['面積', `${largeNumberText(info.area_km2)} km²`]);
+  if (info.elevation_m !== undefined) facts.push(['標高', `${numberText(info.elevation_m)} m`]);
+  return facts;
+}
+
+export function countryFacts(info: CountryInfo): [string, string][] {
+  const facts: [string, string][] = [];
+  if (info.capital) facts.push(['首都', info.capital]);
+  if (info.population !== undefined) facts.push(['人口', populationText(info.population, info.population_year)]);
+  if (info.area_km2 !== undefined) facts.push(['面積', `${largeNumberText(info.area_km2)} km²`]);
+  if (info.languages?.length) facts.push(['公用語', info.languages.join('、')]);
+  if (info.currency) facts.push(['通貨', info.currency]);
+  return facts;
+}
+
 export function regionFacts(info: RegionInfo, category?: string): [string, string][] {
   const facts: [string, string][] = [];
   const kind = category ? REGION_CATEGORY[category] : undefined;
@@ -150,7 +199,9 @@ export class InfoCard {
     lake: Record<string, LakeInfo> | null;
     region: Record<string, RegionInfo> | null;
     peak: Record<string, PeakInfo> | null;
-  } = { river: null, lake: null, region: null, peak: null };
+    city: Record<string, CityInfo> | null;
+    country: Record<string, CountryInfo> | null;
+  } = { river: null, lake: null, region: null, peak: null, city: null, country: null };
   private readonly loading: Partial<Record<InfoKind, Promise<void>>> = {};
   private pendingKey: string | null = null; // 乗せてから出すまで待っている名前
   private pendingSince = 0;
@@ -170,6 +221,9 @@ export class InfoCard {
       lake: () => import('./data/lake-info.json').then((m) => void (this.data.lake = m.default as unknown as Record<string, LakeInfo>)),
       region: () => import('./data/region-info.json').then((m) => void (this.data.region = m.default as unknown as Record<string, RegionInfo>)),
       peak: () => import('./data/peak-info.json').then((m) => void (this.data.peak = m.default as unknown as Record<string, PeakInfo>)),
+      city: () => import('./data/city-info.json').then((m) => void (this.data.city = m.default as unknown as Record<string, CityInfo>)),
+      country: () =>
+        import('./data/country-info.json').then((m) => void (this.data.country = m.default as unknown as Record<string, CountryInfo>)),
     };
     this.loading[kind] ??= imports[kind]();
     return this.loading[kind];
@@ -193,6 +247,14 @@ export class InfoCard {
       case 'peak': {
         const info = this.data.peak?.[target.key];
         return info ? { facts: peakFacts(info), summary: info.summary } : null;
+      }
+      case 'city': {
+        const info = this.data.city?.[target.key];
+        return info ? { facts: cityFacts(info), summary: info.summary } : null;
+      }
+      case 'country': {
+        const info = this.data.country?.[target.key];
+        return info ? { facts: countryFacts(info), summary: info.summary } : null;
       }
     }
   }
@@ -241,6 +303,12 @@ export class InfoCard {
       summary.className = 'info-card-summary';
       summary.textContent = summaryText;
       parts.push(summary);
+    }
+    if (target.hint) {
+      const hint = document.createElement('div');
+      hint.className = 'info-card-hint';
+      hint.textContent = target.hint;
+      parts.push(hint);
     }
     const source = document.createElement('div');
     source.className = 'info-card-source';

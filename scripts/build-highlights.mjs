@@ -278,6 +278,7 @@ function loadCountries(file) {
       x: round(p.LABEL_X),
       y: round(p.LABEL_Y),
       r: p.LABELRANK,
+      w: p.WIKIDATAID || undefined,
       polygons,
       bbox,
     };
@@ -371,7 +372,8 @@ function regionCountries(region) {
 
 const rivers = buildRivers(riversFile).map((river) => ({ ...river, c: riverCountries(river) }));
 const regions = buildRegions(regionsFile).map((region) => ({ ...region, k: regionCountries(region) }));
-const countryTable = countries.map(({ a3, n, ja, f, x, y, r }) => ({ a3, n, ja, f, x, y, r }));
+// w は Wikidata の ID (国の詳しい情報を引くのに使う。scripts/build-place-info.mjs)
+const countryTable = countries.map(({ a3, n, ja, f, x, y, r, w }) => ({ a3, n, ja, f, x, y, r, ...(w ? { w } : {}) }));
 
 // 点。山頂など (標高点) と、滝・岬・島などの代表点。e は標高 (m。ないときは null)、k はその点がある国 (海の上なら空)
 function buildPoints(files) {
