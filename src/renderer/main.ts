@@ -1,5 +1,6 @@
 import type { DemoPlace } from './demo';
 import { initMcpBridge } from './mcp-bridge';
+import { initCustomSelects } from './custom-select';
 import { initDemo } from './demo-controller';
 import { initLensControls } from './camera-panel';
 import { initDisplayMenu } from './display-menu';
@@ -10,6 +11,7 @@ import { initMusicPlayer } from './music-player';
 import { hideNews, initNewsView, renderHourly, renderNews, setClockOffset, setClockTime, showClockPlace } from './news-view';
 import { initSettingsDialog } from './settings-dialog';
 import { initTimeControl } from './time-control';
+import { initTooltips } from './tooltip';
 import { initTourPanel } from './tour-panel';
 import { applyUiFont } from './ui-font';
 
@@ -121,6 +123,9 @@ function initPanelFolds() {
 }
 
 async function init(): Promise<void> {
+  // OS 標準のツールチップと選択の一覧を、アプリのデザインのものに置き換える
+  initTooltips();
+  initCustomSelects();
   initNewsView();
   initScreenshotToast();
   const { applyPanels, showPanels } = initPanelFolds();

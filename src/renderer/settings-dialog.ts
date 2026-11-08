@@ -86,7 +86,9 @@ function initHelpPopup(dialog: HTMLDialogElement): void {
     if (!(target instanceof Element)) return null;
     const inside = target.closest<HTMLElement>('[data-help]');
     if (inside) return inside;
-    return target.id ? dialog.querySelector<HTMLElement>(`label[for="${target.id}"][data-help]`) : null;
+    // 選択の欄は、隠した select の代わりに置いたボタン (custom-select.ts) が data-for で select を指す
+    const id = target.id || (target instanceof HTMLElement ? target.dataset.for : undefined);
+    return id ? dialog.querySelector<HTMLElement>(`label[for="${id}"][data-help]`) : null;
   }
 
   dialog.addEventListener('mouseover', (event) => {

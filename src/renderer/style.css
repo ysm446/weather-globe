@@ -32,6 +32,32 @@
   box-sizing: border-box;
 }
 
+/* スクロールバー。標準の scrollbar-color / scrollbar-width を使うと、Windows では OS の部品で描かれて
+   上下の矢印ボタンが残るので、ここで全部を描く (標準のプロパティを書くとこちらが効かなくなるので使わない) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(178, 178, 178, 0.28) padding-box;
+  border: 2px solid transparent;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(178, 178, 178, 0.45);
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
 html,
 body {
   height: 100%;
@@ -1454,8 +1480,6 @@ body.demo-idle * {
   max-height: 40vh;
   overflow-x: hidden; /* 縦のスクロールバーが出て幅が狭くなっても、横には動かさない (名前は ... で切る) */
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(178, 178, 178, 0.28) transparent;
   padding: 10px 16px;
   background: var(--panel);
   border-radius: 8px;
@@ -2050,8 +2074,6 @@ body.hide-tour-panel #tour-panel {
   min-height: 0;
   padding: 14px 2px 2px;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(178, 178, 178, 0.28) transparent;
 }
 
 .field-row {
@@ -2180,6 +2202,155 @@ select option {
   background: var(--panel-solid);
 }
 
+/* ------------------------------------------------ OS 標準の部品の置き換え */
+
+/* 選択の欄。元の select は値の持ち主として残して隠し、隣のボタンと一覧を出す (custom-select.ts) */
+select.native-select {
+  display: none;
+}
+
+.app-select {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  text-align: left;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.app-select:hover:not(:disabled) {
+  background: rgba(178, 178, 178, 0.1);
+}
+
+.app-select:disabled {
+  opacity: 0.4;
+}
+
+.app-select-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-select svg {
+  flex: none;
+  color: var(--text-2);
+  transition: transform 150ms;
+}
+
+.app-select.open svg {
+  transform: rotate(180deg);
+}
+
+.app-select-list {
+  position: fixed;
+  z-index: 2;
+  overflow-y: auto;
+  padding: 4px;
+  font-size: 14px;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.app-select-option {
+  padding: 5px 10px 5px 24px;
+  white-space: nowrap;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.app-select-option.active {
+  background: rgba(178, 178, 178, 0.16);
+}
+
+/* 選んでいる候補には左に印を付ける */
+.app-select-option[aria-selected='true'] {
+  background-image: radial-gradient(circle, var(--accent) 2.5px, transparent 3px);
+  background-repeat: no-repeat;
+  background-position: 10px center;
+  background-size: 8px 8px;
+}
+
+/* ツールチップ (tooltip.ts)。設定画面の項目の説明 (.settings-tip) と同じ見た目 */
+.app-tip {
+  position: fixed;
+  z-index: 3;
+  max-width: 320px;
+  padding: 5px 9px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  animation: app-tip-in 120ms ease-out;
+}
+
+.app-tip[hidden] {
+  display: none;
+}
+
+@keyframes app-tip-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* チェックボックス */
+input[type='checkbox'] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  background: var(--field) center / 12px 12px no-repeat;
+  border: 1px solid rgba(178, 178, 178, 0.45);
+  border-radius: 4px;
+  cursor: pointer;
+  appearance: none;
+  transition: background-color 120ms, border-color 120ms;
+}
+
+input[type='checkbox']:hover:not(:disabled) {
+  border-color: rgba(178, 178, 178, 0.8);
+}
+
+input[type='checkbox']:checked {
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23121212' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
+  border-color: var(--accent);
+}
+
+input[type='checkbox']:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 検索欄の消去ボタン */
+input[type='search']::-webkit-search-cancel-button {
+  width: 14px;
+  height: 14px;
+  background-color: var(--text-2);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E") center / contain no-repeat;
+  cursor: pointer;
+  appearance: none;
+}
+
+input[type='search']::-webkit-search-cancel-button:hover {
+  background-color: var(--text);
+}
+
 .settings-help {
   margin: 6px 0 0;
   color: var(--text-2);
@@ -2297,8 +2468,6 @@ body.panels-right #panels {
   flex-direction: column;
   gap: 8px;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(178, 178, 178, 0.28) transparent;
 }
 
 body.panels-right #forecasts {
@@ -2341,8 +2510,6 @@ body.panels-right #forecasts {
     flex-direction: column;
     gap: 8px;
     overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(178, 178, 178, 0.28) transparent;
   }
 
   #forecasts {
