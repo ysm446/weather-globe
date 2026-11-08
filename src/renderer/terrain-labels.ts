@@ -113,6 +113,8 @@ interface TerrainLabel {
   rank: number;
   kind: TerrainKind;
   peak: boolean;
+  lon: number; // 名前を置く点 (山の頂へ寄るのに使う。川は使わない)
+  lat: number;
   candidates: THREE.Vector3[] | null; // 川の名前を置く候補の点。範囲、湖、山の頂は null
   lines: RiverLine[] | null; // 川の線 (クリックしたときに描く)。川のほかは null (湖の形は lakeShape で引く)
   polygons: number[][][] | null; // 範囲の形 (クリックしたときに描く)。範囲のほかは null
@@ -141,7 +143,7 @@ export type TerrainPick =
   | { kind: 'river'; key: string; name: string; lines: RiverLine[]; box: LabelBox }
   | { kind: 'lake'; key: string; name: string; box: LabelBox }
   | { kind: 'region'; key: string; name: string; polygons: number[][][]; color: string; category: string; box: LabelBox }
-  | { kind: 'peak'; key: string; name: string; elevation: number | null; box: LabelBox };
+  | { kind: 'peak'; key: string; name: string; elevation: number | null; lon: number; lat: number; box: LabelBox };
 
 export class TerrainLabels {
   private labels: TerrainLabel[] = [];
@@ -266,6 +268,8 @@ export class TerrainLabels {
       elevation: null,
       current: -1,
       element,
+      lon,
+      lat,
       world: lonLatToVector3(lon, lat, this.radius),
       width: 0,
       height: 0,
@@ -328,7 +332,7 @@ export class TerrainLabels {
       case 'region':
         return { kind: 'region', key, name, polygons: found.polygons!, color: found.color, category: found.category, box };
       case 'peak':
-        return { kind: 'peak', key, name, elevation: found.elevation, box };
+        return { kind: 'peak', key, name, elevation: found.elevation, lon: found.lon, lat: found.lat, box };
     }
   }
 
