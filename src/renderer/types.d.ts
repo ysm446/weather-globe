@@ -87,6 +87,7 @@ interface GraphicsSettings {
   show_tour_panel: boolean;
   show_heading_tape: boolean; // 地域ビューで動いている間に出す上の方位テープ
   show_scale_bar: boolean; // 右下の縮尺のバー
+  recording_fps: number; // 録画 (Ctrl+F12) の毎秒のコマ数 (30, 60)
 }
 
 interface PanelSettings {
@@ -193,6 +194,11 @@ interface Window {
     searchLocations(query: string): Promise<WeatherLocation[]>;
     revealScreenshot(filePath: string): Promise<void>;
     onScreenshot(callback: (filePath: string | null) => void): void; // 保存に失敗したときは null
+    // 録画 (screen-recorder.ts)。Ctrl+F12 で届く切り替え、書き出すファイルの用意、中身の追記、書き終え (保存したパス。空なら null)
+    onRecordingToggle(callback: () => void): void;
+    recordingBegin(extension: 'mp4' | 'webm'): Promise<string>;
+    recordingChunk(chunk: Uint8Array): Promise<void>;
+    recordingEnd(): Promise<string | null>;
     watchVram(enabled: boolean): Promise<void>;
     onVram(callback: (bytes: number | null) => void): void; // 読めないときは null
   };

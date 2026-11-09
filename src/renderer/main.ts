@@ -8,6 +8,7 @@ import { el, errorMessage, setStatus } from './dom';
 import { initGlobe } from './globe-view';
 import { initMapLayers } from './map-layers';
 import { initMusicPlayer } from './music-player';
+import { initScreenRecorder } from './screen-recorder';
 import { hideNews, initNewsView, renderHourly, renderNews, setClockOffset, setClockTime, showClockPlace } from './news-view';
 import { initSettingsDialog } from './settings-dialog';
 import { initTimeControl } from './time-control';
@@ -19,7 +20,8 @@ const NEWS_REFRESH_MS = 15 * 60_000; // Open-Meteo の現在値は 15 分刻み
 
 const SCREENSHOT_TOAST_MS = 6000; // クリックする余裕を持たせる
 
-function initScreenshotToast(): void {
+// スクリーンショットと録画の保存の通知。返す関数で出す
+function initScreenshotToast(): (kind: 'screenshot' | 'recording', filePath: string | null) => void {
   const toast = el('screenshot-toast');
   const open = el<HTMLButtonElement>('screenshot-toast-open');
   const dialog = el<HTMLDialogElement>('settings');
@@ -30,11 +32,10 @@ function initScreenshotToast(): void {
     toast.hidden = true;
   };
 
-  window.weatherApi.onScreenshot((filePath) => {
+  const name = { screenshot: 'スクリーンショット', recording: '録画' };
+  function show(kind: 'screenshot' | 'recording', filePath: string | null): void {
     savedPath = filePath;
-    el('screenshot-toast-title').textContent = filePath
-      ? 'スクリーンショットを保存しました'
-      : 'スクリーンショットを保存できませんでした';
+    el('screenshot-toast-title').textContent = `${name[kind]}を${filePath ? '保存しました' : '保存できませんでした'}`;
     el('screenshot-toast-file').textContent = filePath ? (filePath.split(/[\\/]/).pop() ?? '') : '';
     el('screenshot-toast-hint').textContent = filePath ? 'クリックで保存先を開く' : '';
     open.disabled = !filePath;
@@ -43,13 +44,15 @@ function initScreenshotToast(): void {
     toast.hidden = false;
     window.clearTimeout(timer);
     timer = window.setTimeout(hide, SCREENSHOT_TOAST_MS);
-  });
+  }
+  window.weatherApi.onScreenshot((filePath) => show('screenshot', filePath));
   dialog.addEventListener('close', () => document.body.append(toast));
   open.addEventListener('click', () => {
     if (savedPath) void window.weatherApi.revealScreenshot(savedPath);
     hide();
   });
   el('screenshot-toast-close').addEventListener('click', hide);
+  return show;
 }
 
 const PANELS_RIGHT_MIN_WIDTH = 901; // これより狭い画面ではパネルを下に置く (style.css と合わせる)
@@ -127,7 +130,7 @@ async function init(): Promise<void> {
   initTooltips();
   initCustomSelects();
   initNewsView();
-  initScreenshotToast();
+  const showSavedToast = initScreenshotToast();
   const { applyPanels, showPanels } = initPanelFolds();
   const globe = initGlobe(selectCity, (next) => showView(next));
   window.__weatherGlobeDebug.renderHourly = renderHourly;
@@ -188,6 +191,12 @@ async function init(): Promise<void> {
   }
   applyMode('normal');
   const tourPanel = initTourPanel(globe.tour);
+  // Ctrl+F12 と MCP からの録画。音楽と画質の設定は、このあとで用意するものを録画のときに読む
+  const recorder = initScreenRecorder({
+    fps: () => graphics?.recording_fps ?? 30,
+    audioTrack: () => music.recordingTrack(),
+    onSaved: (filePath) => showSavedToast('recording', filePath),
+  });
   // MCP サーバーからの操作。表示モードはボタンと同じく切り替えて保存する
   initMcpBridge(
     globe.remote,
@@ -197,6 +206,7 @@ async function init(): Promise<void> {
       window.weatherApi.setMode(next).catch((err) => console.error('mode save failed', err));
     },
     tourPanel,
+    recorder,
   );
 
   const status = el('weather-status');

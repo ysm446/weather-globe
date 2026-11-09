@@ -7,6 +7,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
+import { isVideoSize, setVideoSize, VIDEO_HEIGHT, VIDEO_WIDTH } from './recording';
 
 export const MCP_PORT = 47815;
 const CALL_TIMEOUT_MS = 30_000;
@@ -203,6 +204,37 @@ function createServer(): McpServer {
     'set_map_lines',
     { description: '海岸線と国境線を出すか (この場だけ。設定は変えない)。', inputSchema: { visible: z.boolean() } },
     relay('set_map_lines'),
+  );
+  server.registerTool(
+    'start_recording',
+    {
+      description:
+        '画面の録画を始める (Ctrl+F12 と同じ)。今のウィンドウの中身を物理ピクセルのまま、音楽も入れて data/recordings/ に MP4 で保存する。大きさを揃えたいときは先に set_video_size で動画用サイズにする。録画を止めるまで、カメラやツアーの操作はすべて写る。結果に保存先、大きさ、コマ数を返す。',
+      inputSchema: { fps: z.union([z.literal(30), z.literal(60)]).optional().describe('毎秒のコマ数。省くと設定の値 (既定 30)') },
+    },
+    relay('start_recording'),
+  );
+  server.registerTool(
+    'stop_recording',
+    { description: '録画を止めて保存する。書き終えるまで待ち、保存先のパスを返す。', inputSchema: {} },
+    relay('stop_recording'),
+  );
+  server.registerTool(
+    'set_video_size',
+    {
+      description: `動画用サイズに切り替える・戻す (F11 と同じ)。enabled が true なら、ウィンドウの中身を物理ピクセルで ${VIDEO_WIDTH}×${VIDEO_HEIGHT} にし、表示倍率 100% のモニターと同じ構図で描く。false で切り替える前の大きさに戻す。録画の前に使う (録画中はエラーになる)。`,
+      inputSchema: { enabled: z.boolean() },
+    },
+    async ({ enabled }) => {
+      const win = mainWindow();
+      if (!win) return failure('アプリの窓が開いていません');
+      try {
+        setVideoSize(win, enabled);
+      } catch (error) {
+        return failure(error);
+      }
+      return text({ video_size: isVideoSize(), width: VIDEO_WIDTH, height: VIDEO_HEIGHT });
+    },
   );
   server.registerTool(
     'screenshot',

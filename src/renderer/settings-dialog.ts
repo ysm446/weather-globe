@@ -233,6 +233,7 @@ export function initSettingsDialog(
     fps_limit: el<HTMLSelectElement>('fps-limit'),
     render_scale: el<HTMLSelectElement>('render-scale'),
     cloud_resolution: el<HTMLSelectElement>('cloud-resolution'),
+    recording_fps: el<HTMLSelectElement>('recording-fps'),
   };
   // 値が文字列の選択
   const choices = {

@@ -22,6 +22,8 @@ export function initMusicPlayer(openSettings: () => void) {
   const audio = new Audio();
   audio.loop = true;
   audio.preload = 'none';
+  // 録画で Web Audio に通すとき、別の生成元 (weather-audio://) の音でも無音にならないよう CORS で読む
+  audio.crossOrigin = 'anonymous';
   window.__weatherGlobeDebug.music = audio;
   let file: string | null = null;
   let loads = 0;
@@ -137,7 +139,24 @@ export function initMusicPlayer(openSettings: () => void) {
     syncPlaying();
   }
 
+  // 録画に入れる音。初めて頼まれたときに音楽を Web Audio に通し、スピーカーと録画の両方へ流す。
+  // 一度通すと戻せないので、そのあとも同じものを使う。止まっている間は無音の音が流れる
+  let recordingAudio: { context: AudioContext; destination: MediaStreamAudioDestinationNode } | null = null;
+  function recordingTrack(): MediaStreamTrack {
+    if (!recordingAudio) {
+      const context = new AudioContext();
+      const source = context.createMediaElementSource(audio);
+      const destination = context.createMediaStreamDestination();
+      source.connect(context.destination);
+      source.connect(destination);
+      recordingAudio = { context, destination };
+    }
+    void recordingAudio.context.resume();
+    return recordingAudio.destination.stream.getAudioTracks()[0];
+  }
+
   return {
+    recordingTrack,
     apply(settings: AppSettings): void {
       volume.value = String(Math.round((settings.audio_volume ?? 0.5) * 100));
       showVolume();
