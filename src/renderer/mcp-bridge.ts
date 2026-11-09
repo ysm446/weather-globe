@@ -1,6 +1,7 @@
 // MCP サーバー (メインプロセス) から届いたツールの処理を、画面の操作に橋渡しする
 import type { HighlightSpec } from './highlights';
 import type { TourScene } from './tour';
+import type { ScreenRecorder } from './screen-recorder';
 import type { TourPanel } from './tour-panel';
 import { localHourToDate } from './tour-time';
 
@@ -21,7 +22,7 @@ type Remote = {
 
 type Args = Record<string, unknown>;
 
-export function initMcpBridge(remote: Remote, setMode: (mode: MapMode) => void, tours: TourPanel): void {
+export function initMcpBridge(remote: Remote, setMode: (mode: MapMode) => void, tours: TourPanel, recorder: ScreenRecorder): void {
   const handlers: Record<string, (args: Args) => unknown> = {
     get_view: () => remote.getView(),
     fly_to: (a) => {
@@ -57,6 +58,14 @@ export function initMcpBridge(remote: Remote, setMode: (mode: MapMode) => void, 
     clear_caption: () => {
       remote.clearCaption();
       return 'ok';
+    },
+    start_recording: (a) => recorder.start(a.fps as number | undefined),
+    stop_recording: async () => {
+      const info = recorder.recording();
+      if (!info) throw new Error('録画していません');
+      const file = await recorder.stop();
+      if (!file) throw new Error('録画を保存できませんでした');
+      return { ...info, file };
     },
     play_tour: async (a) => {
       const scenes = a.scenes as TourScene[];

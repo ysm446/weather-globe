@@ -10,6 +10,7 @@ import { backendRequest, startBackend, stopBackend } from './backend';
 import { startVramMonitor, stopVramMonitor } from './vram-monitor';
 import { createTerrainSource } from './terrain-tiles';
 import { setMcpServerEnabled } from './mcp-server';
+import { abortRecording, initRecording, isRecordingPath, resetZoomOnLoad, toggleVideoSize, watchWindowTitle } from './recording';
 
 const GFS_MAX_AGE_MS = 3 * 3600_000; // GFS 1.0° は 3 時間刻み
 const GFS_FETCH_TIMEOUT_MS = 30_000;
@@ -17,8 +18,9 @@ const PAST_KEEP_MS = 5 * 24 * 3600_000; // 見られるのは 3 日前の 0 時 
 const AUDIO_SCHEME = 'weather-audio';
 const AUDIO_EXTENSIONS = ['mp3', 'm4a', 'aac', 'ogg', 'opus', 'wav', 'flac'];
 
-// 音源を少しずつ読むための読み込み口。app の準備ができる前に登録する必要がある
-protocol.registerSchemesAsPrivileged([{ scheme: AUDIO_SCHEME, privileges: { standard: true, stream: true } }]);
+// 音源を少しずつ読むための読み込み口。app の準備ができる前に登録する必要がある。
+// 録画で音を Web Audio に通すため、画面 (file://) からの CORS の読み込みを受け付ける
+protocol.registerSchemesAsPrivileged([{ scheme: AUDIO_SCHEME, privileges: { standard: true, stream: true, corsEnabled: true } }]);
 
 // 動作検証時に実際の設定を汚さないよう、環境変数で差し替えられる
 function dataDir(): string {
@@ -331,7 +333,11 @@ async function audioResponse(file: string, rangeHeader: string | null): Promise<
   if (size === 0) return new Response(null, { status: 404 });
   const range = parseByteRange(rangeHeader, size);
   const { start, end } = range ?? { start: 0, end: size - 1 };
-  const headers: Record<string, string> = { 'Accept-Ranges': 'bytes', 'Content-Length': String(end - start + 1) };
+  const headers: Record<string, string> = {
+    'Accept-Ranges': 'bytes',
+    'Content-Length': String(end - start + 1),
+    'Access-Control-Allow-Origin': '*', // 録画のために <audio crossorigin> で読む (music-player.ts)
+  };
   if (range) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
   const body = Readable.toWeb(fs.createReadStream(file, { start, end })) as ReadableStream;
   return new Response(body, { status: range ? 206 : 200, headers });
@@ -341,9 +347,10 @@ function screenshotDir(): string {
   return path.join(dataDir(), 'screenshots');
 }
 
-// 通知のクリックから保存先を開く。スクリーンショットのフォルダの中だけ受け付ける
+// 通知のクリックから保存先を開く。スクリーンショットと録画のフォルダの中だけ受け付ける
 ipcMain.handle('screenshot:reveal', (_event, filePath: string) => {
-  if (path.dirname(filePath) === screenshotDir() && fs.existsSync(filePath)) shell.showItemInFolder(filePath);
+  const allowed = path.dirname(filePath) === screenshotDir() || isRecordingPath(filePath);
+  if (allowed && fs.existsSync(filePath)) shell.showItemInFolder(filePath);
 });
 
 // 連続で撮っても前の通知が写らないよう、消えた画面が描かれるまで待つ
@@ -389,8 +396,12 @@ function createWindow(): void {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // 録画で音楽を Web Audio に通す。キー (Ctrl+F12) や MCP から始めると、画面の操作を経ないため
+      autoplayPolicy: 'no-user-gesture-required',
     },
   });
+  watchWindowTitle(win);
+  resetZoomOnLoad(win);
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
   // 出典リンクは既定のブラウザで開き、アプリ内では遷移させない
@@ -400,12 +411,20 @@ function createWindow(): void {
   });
   win.webContents.on('will-navigate', (event) => event.preventDefault());
   // 読み直した画面は FPS の表示の設定から改めて頼んでくる
-  win.webContents.on('did-start-loading', stopVramMonitor);
+  win.webContents.on('did-start-loading', () => {
+    stopVramMonitor();
+    abortRecording(win);
+  });
 
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return;
-    // F12 は物理ピクセルのまま、Shift+F12 は表示倍率 100% 相当の大きさで保存する
-    if (input.key === 'F12') void captureScreenshot(win, input.shift);
+    // F12 は物理ピクセルのまま、Shift+F12 は表示倍率 100% 相当の大きさで保存する。
+    // Ctrl+F12 で録画の開始と停止、F11 で動画用サイズへの切り替えと戻し (recording.ts)
+    if (input.key === 'F12') {
+      if (!input.control) void captureScreenshot(win, input.shift);
+      else if (!input.shift) win.webContents.send('recording:toggle');
+    }
+    if (input.key === 'F11' && !input.control && !input.shift && !input.alt) toggleVideoSize(win);
     // Ctrl+R で画面だけを読み直す。メニューを外しているので Electron の標準の操作は効かない
     if (input.control && input.key.toLowerCase() === 'r') {
       event.preventDefault();
@@ -416,6 +435,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+  initRecording(dataDir());
   // URL によらず、設定で選んだ音源だけを返す
   protocol.handle(AUDIO_SCHEME, async (request) => {
     const { audio_file: file } = (await backendRequest('/settings')) as { audio_file: string | null };

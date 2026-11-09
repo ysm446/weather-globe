@@ -1,7 +1,7 @@
 # MCP サーバーとツアーガイド
 
 作成日時: 2026-11-06 20:04
-更新日時: 2026-11-07 22:03
+更新日時: 2026-11-09 22:12
 
 Claude Code や Codex、ローカル LLM(Gemma 4 26B を想定)から、アプリのカメラを動かせるようにする計画と、その実装のメモ。「ドナウ川を見せて」「世界の長い川を順に見せて」と頼むと、LLM が行き先と説明を決め、アプリがそこへ飛んで見せる。2026-11-06 に MCP サーバーの最初の版を作った(下の「実装(2026-11-06)」)。
 
@@ -9,7 +9,7 @@ Claude Code や Codex、ローカル LLM(Gemma 4 26B を想定)から、アプ�
 
 - **置き場所:** `src/main/mcp-server.ts`(メインプロセス)。公式の SDK(`@modelcontextprotocol/sdk` 1.32.2、`zod` 4.6.7)の Streamable HTTP を状態を持たない使い方で使い、要求ごとにサーバーを作る。`http://127.0.0.1:47815/mcp` で待ち受け、POST だけを受ける。
 - **オンオフ:** 設定の「パフォーマンス」の「外部との連携」の「MCP サーバー」(既定はオフ)。起動時と設定を変えたときに、メインプロセスが設定を見て待ち受けを始める・止める。アプリを終えるときは止める。
-- **画面との受け渡し:** ツールの処理は画面で行う。メインプロセスが `mcp:call` で頼み、画面(`src/renderer/mcp-bridge.ts`)が `mcp:reply` で結果を返す(30 秒で打ち切り)。画面側の操作は `globe-view.ts` の `remote` にまとめた。`screenshot` だけはメインプロセスで画面を撮る(幅 1280 の JPEG)。
+- **画面との受け渡し:** ツールの処理は画面で行う。メインプロセスが `mcp:call` で頼み、画面(`src/renderer/mcp-bridge.ts`)が `mcp:reply` で結果を返す(30 秒で打ち切り)。画面側の操作は `globe-view.ts` の `remote` にまとめた。`screenshot` だけはメインプロセスで画面を撮る(幅 1280 の JPEG)。2026-11-09 に録画の `start_recording`、`stop_recording`(画面で録る)と `set_video_size`(メインプロセスでウィンドウの大きさを変える)を足した(plan.md の「録画」)。
 - **ツール(14):** `get_view`(視点、モード、中心、高さ km、時刻、中心での太陽の高さ、ツアーの進み具合)、`fly_to`(緯度、経度、高さ km、方角、傾き、旋回)、`highlight`(river / area / point / line / arrow / polygon と見た目の指定。結果に名前、範囲、通る国)、`frame_highlights`、`clear_highlights`、`show_caption`、`clear_caption`、`play_tour`、`stop_tour`、`set_time`(地方時か日時、省くと今)、`set_mode`、`set_view`、`set_map_lines`(この場だけ。設定は変えない)、`screenshot`。引数は JSON Schema(zod)で形を決め、外れた値や見つからない名前は理由を付けて `isError` で返す。
 - **地球ビューから:** `highlight` のあとの `frame_highlights` と `fly_to` は、地球ビューからでも地域ビューに入ってカメラを寄せる。風速モードと太陽系の視点では断る。
 - **Claude Code への登録:** `claude mcp add --transport http weather-globe http://127.0.0.1:47815/mcp`(アプリを起動し、設定で MCP サーバーをオンにしておく)。

@@ -404,6 +404,15 @@
           </div>
           <button class="reset-button" data-reset="terrain_shading" type="button" aria-label="太陽の向きで付ける地形の陰を既定に戻す" title="既定に戻す"></button>
         </div>
+        <h3 class="settings-subhead">録画</h3>
+        <div class="field-grid">
+          <label for="recording-fps" data-help="Ctrl+F12 で録画するときの毎秒のコマ数。60 はなめらかですが、描画と書き出しが重なって GPU の負荷が増え、追いつかないとコマが落ちます。FPS 上限より大きくはなりません。F11 で、ウィンドウを録画用の 1920×1080(表示倍率 100% と同じ構図)に切り替え、もう一度押すと戻ります(録画中は切り替えられません)。既定: 30">録画のコマ数</label>
+          <select id="recording-fps">
+            <option value="30">30</option>
+            <option value="60">60</option>
+          </select>
+          <button class="reset-button" data-reset="recording_fps" type="button" aria-label="録画のコマ数を既定に戻す" title="既定に戻す"></button>
+        </div>
         <h3 class="settings-subhead">外部との連携</h3>
         <div class="check-line">
           <label class="check-row" data-help="Claude Code などの MCP クライアントから、カメラ、ハイライト、字幕、ツアーを動かせるようにします。http://127.0.0.1:47815/mcp で待ち受け、この PC の中からだけつながります(同じ PC のほかのアプリからも呼べます)。既定: オフ"><input id="mcp-server-toggle" type="checkbox" />MCP サーバー(Claude Code などから操作)</label>
