@@ -6,6 +6,7 @@ import { initLensControls } from './camera-panel';
 import { initDisplayMenu } from './display-menu';
 import { el, errorMessage, setStatus } from './dom';
 import { initGlobe } from './globe-view';
+import { initKeyHelp } from './key-help';
 import { initMapLayers } from './map-layers';
 import { initMusicPlayer } from './music-player';
 import { initScreenRecorder } from './screen-recorder';
@@ -131,6 +132,7 @@ async function init(): Promise<void> {
   initCustomSelects();
   initNewsView();
   const showSavedToast = initScreenshotToast();
+  initKeyHelp();
   const { applyPanels, showPanels } = initPanelFolds();
   const globe = initGlobe(selectCity, (next) => showView(next));
   window.__weatherGlobeDebug.renderHourly = renderHourly;
