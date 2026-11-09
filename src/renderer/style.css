@@ -148,7 +148,8 @@ a:hover {
 #screenshot-toast,
 #music-popup,
 #tour-caption,
-#settings::before {
+#settings::before,
+#key-help::before {
   backdrop-filter: var(--glass);
 }
 
@@ -167,7 +168,8 @@ a:hover {
 .forecast-panel,
 #layer-info,
 #music-popup,
-#settings::before {
+#settings::before,
+#key-help::before {
   box-shadow: var(--panel-glow);
 }
 
@@ -2621,4 +2623,84 @@ body.panels-right #forecasts {
   .marker-dot::after {
     animation: none;
   }
+}
+
+/* ------------------------------------------------ 操作の一覧 (key-help.ts) */
+
+/* 設定画面と同じすりガラスの枠。後ろの画面は暗くしない */
+#key-help {
+  width: 900px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  padding: 16px 20px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+}
+
+#key-help::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--panel);
+  border-radius: inherit;
+}
+
+#key-help::backdrop {
+  background: transparent;
+}
+
+#key-help[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+#key-help h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* 幅に合わせて段を組む。区分の途中では段を分けない */
+#key-help-body {
+  margin-top: 12px;
+  overflow-y: auto;
+  columns: 2 380px;
+  column-gap: 32px;
+}
+
+#key-help-body section {
+  break-inside: avoid;
+  padding-bottom: 12px;
+}
+
+#key-help-body dl {
+  display: grid;
+  grid-template-columns: 11em 1fr; /* 区分が違ってもキーの列を揃える */
+  gap: 5px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+
+#key-help-body dt {
+  color: var(--text-2);
+}
+
+#key-help-body dd {
+  margin: 0;
+}
+
+#key-help-body kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 0 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line);
+  border-radius: 4px;
 }

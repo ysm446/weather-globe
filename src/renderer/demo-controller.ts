@@ -111,11 +111,12 @@ export function initDemo(
     globe.returnToLocation();
   }
 
-  // 地球の操作やキー操作で終わる。スクリーンショットと録画 (F12)、動画用サイズ (F11)、パネルの開閉やスクロール、音楽の操作では終わらない
+  // 地球の操作やキー操作で終わる。スクリーンショットと録画 (F12)、動画用サイズ (F11)、操作の一覧 (?)、
+  // パネルの開閉やスクロール、音楽の操作では終わらない
   function onInput(event: Event): void {
-    if (event instanceof KeyboardEvent && (event.key === 'F12' || event.key === 'F11')) return;
+    if (event instanceof KeyboardEvent && ['F12', 'F11', '?'].includes(event.key)) return;
     const target = event.target instanceof Element ? event.target : null;
-    if (target?.closest('#panels, #detail-panel, #screenshot-toast, #music-toggle, #music-popup')) return;
+    if (target?.closest('#panels, #detail-panel, #screenshot-toast, #music-toggle, #music-popup, #open-help, #key-help')) return;
     if (target?.closest('#start-demo')) stoppedByStartButton = true; // 続く click で再開しない
     // 右上や右下のボタンはそのまま働かせる。地球は触った操作をドラッグとして始めない
     if (!(event instanceof KeyboardEvent) && target?.closest('button')) {
