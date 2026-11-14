@@ -197,6 +197,7 @@ async function init(): Promise<void> {
   // Ctrl+F12 と MCP からの録画。音楽と画質の設定は、このあとで用意するものを録画のときに読む
   const recorder = initScreenRecorder({
     fps: () => graphics?.recording_fps ?? 30,
+    cursor: () => graphics?.recording_cursor ?? false,
     audioTrack: () => music.recordingTrack(),
     onSaved: (filePath) => showSavedToast('recording', filePath),
   });

@@ -141,6 +141,7 @@ class GraphicsUpdate(BaseModel):
     population_style: Literal["heatmap", "dots", "dots_flat"] = "dots"  # 同上
     show_terrain_labels: bool = False  # 同上
     recording_fps: Literal[30, 60] = 30  # 同上
+    recording_cursor: bool = False  # 同上
 
 
 @app.get("/health")

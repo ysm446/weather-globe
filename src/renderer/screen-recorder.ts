@@ -32,6 +32,7 @@ export function videoBitrate(width: number, height: number, fps: number): number
 
 export function initScreenRecorder(options: {
   fps: () => number; // 設定の「録画のコマ数」
+  cursor: () => boolean; // 設定の「録画にマウスポインタを入れる」。オフなら録画中はポインタを消す
   audioTrack: () => MediaStreamTrack | null; // 音楽 (music-player.ts)
   onSaved: (filePath: string | null) => void; // 保存できなかったときは null
 }) {
@@ -106,6 +107,8 @@ export function initScreenRecorder(options: {
     // ウィンドウが閉じたときなど、映像が途切れたら止める
     stream.getVideoTracks()[0]?.addEventListener('ended', () => void stop());
     recorder.start(CHUNK_MS);
+    // 映像にはウィンドウの上のポインタも入るので、入れないときは録画している間だけ消す
+    document.body.classList.toggle('recording-hide-cursor', !options.cursor());
     session = { recorder, stream, info, stopped };
     return info;
   }
@@ -126,6 +129,7 @@ export function initScreenRecorder(options: {
     const current = session;
     if (!current) return null;
     session = null;
+    document.body.classList.remove('recording-hide-cursor');
     if (current.recorder.state !== 'inactive') current.recorder.stop();
     const saved = await current.stopped;
     options.onSaved(saved);
