@@ -267,6 +267,7 @@ export function initSettingsDialog(
     lens_flare: el<HTMLInputElement>('lens-flare-toggle'),
     wireframe: el<HTMLInputElement>('wireframe-toggle'),
     mcp_server: el<HTMLInputElement>('mcp-server-toggle'),
+    recording_cursor: el<HTMLInputElement>('recording-cursor-toggle'),
     depth_of_field: el<HTMLInputElement>('depth-of-field-toggle'),
     show_hourly_panel: el<HTMLInputElement>('hourly-panel-toggle'),
     show_weekly_panel: el<HTMLInputElement>('weekly-panel-toggle'),

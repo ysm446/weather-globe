@@ -88,6 +88,7 @@ interface GraphicsSettings {
   show_heading_tape: boolean; // 地域ビューで動いている間に出す上の方位テープ
   show_scale_bar: boolean; // 右下の縮尺のバー
   recording_fps: number; // 録画 (Ctrl+F12) の毎秒のコマ数 (30, 60)
+  recording_cursor: boolean; // 録画にマウスポインタを入れる。オフのときは録画中のウィンドウでポインタを消す
 }
 
 interface PanelSettings {

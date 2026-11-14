@@ -117,6 +117,7 @@ class SettingsApiTest(unittest.TestCase):
         "show_heading_tape": False,
         "show_scale_bar": False,
         "recording_fps": 60,
+        "recording_cursor": True,
     }
 
     def test_graphics_defaults(self):
@@ -213,6 +214,7 @@ class SettingsApiTest(unittest.TestCase):
         self.assertTrue(graphics["show_heading_tape"])
         self.assertTrue(graphics["show_scale_bar"])
         self.assertEqual(graphics["recording_fps"], 30)
+        self.assertFalse(graphics["recording_cursor"])
         self.assertEqual(graphics["focal_length"], 24)
         self.assertTrue(graphics["depth_of_field"])
         self.assertEqual(graphics["f_number"], 4.0)

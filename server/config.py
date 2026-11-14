@@ -67,6 +67,7 @@ DEFAULT_SETTINGS = {
         "show_heading_tape": True,  # 地域ビューの上の方位テープ
         "show_scale_bar": True,  # 右下の縮尺のバー
         "recording_fps": 30,  # 録画 (Ctrl+F12) の毎秒のコマ数 (30, 60)
+        "recording_cursor": False,  # 録画にマウスポインタを入れる。オフのときは録画中のウィンドウでポインタを消す
     },
     # True で開いている。カメラのパネルは計器のようなものなので、既定では閉じておく
     "panels": {"hourly": True, "weekly": True, "details": True, "camera": False, "tours": True},

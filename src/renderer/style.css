@@ -1284,7 +1284,8 @@ body.demo #view-hint {
   margin-top: 10px;
 }
 
-body.demo-idle * {
+body.demo-idle *,
+body.recording-hide-cursor * {
   cursor: none !important;
 }
 
