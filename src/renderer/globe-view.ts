@@ -702,6 +702,7 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
       regionDetail.update(dt);
       const { shown, total, failed } = regionDetail.progress;
       viewStatus.classList.toggle('warn', failed > 0);
+      viewStatus.classList.toggle('loading', failed === 0);
       viewStatus.hidden = shown === total;
       if (!viewStatus.hidden) {
         viewStatus.textContent = failed > 0
@@ -762,6 +763,7 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     // 引いていて見えないうちは知らせない
     viewStatus.hidden = shown === total || earthDetailAmount() <= 0;
     viewStatus.classList.toggle('warn', failed > 0);
+    viewStatus.classList.toggle('loading', failed === 0);
     if (!viewStatus.hidden) {
       viewStatus.textContent = failed > 0
         ? '一部の高解像度の画像を取得できず、粗い画像で表示しています'

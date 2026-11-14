@@ -7,6 +7,7 @@ import { initDisplayMenu } from './display-menu';
 import { el, errorMessage, setStatus } from './dom';
 import { initGlobe } from './globe-view';
 import { initKeyHelp } from './key-help';
+import { loadingStatus } from './loading-status';
 import { initMapLayers } from './map-layers';
 import { initMusicPlayer } from './music-player';
 import { initScreenRecorder } from './screen-recorder';
@@ -220,9 +221,9 @@ async function init(): Promise<void> {
   async function refreshNews(): Promise<void> {
     const id = ++requestId;
     refreshBtn.disabled = true;
-    setStatus(status, '最新の天気をまとめています…');
+    setStatus(status, ''); // 取得中の知らせは下の中央に出す
     try {
-      const news = await window.weatherApi.getNews(viewAt?.toISOString());
+      const news = await loadingStatus().track('天気の情報を取得しています…', window.weatherApi.getNews(viewAt?.toISOString()));
       if (id !== requestId) return; // 地点変更などで新しい取得が始まっていたら捨てる
       homeNews = news;
       if (!showingCity) renderNews(news); // 都市を見せている間は、戻るときに出す
@@ -250,6 +251,7 @@ async function init(): Promise<void> {
 
   function showHome(): void {
     cityRequest++;
+    endCityLoading();
     if (selectedCity) setStatus(status, '');
     selectedCity = null;
     if (!showingCity) return;
@@ -267,9 +269,13 @@ async function init(): Promise<void> {
   // ラベルで選んだ都市の天気。設定地点は変えず、左上の地点を押すと (ホームへ戻る) 元に戻す
   let selectedCity: DemoPlace | null = null;
   let cityRequest = 0;
+  let endCityLoading = (): void => {};
   async function loadCity(place: DemoPlace): Promise<void> {
     const request = ++cityRequest;
-    setStatus(status, `${place.name}の天気を取得しています…`);
+    setStatus(status, '');
+    endCityLoading(); // 前に選んだ都市の知らせは残さない
+    const done = loadingStatus().start(`${place.name}の天気を取得しています…`);
+    endCityLoading = done;
     try {
       const news = await window.weatherApi.getPlaceNews(place.name, place.lat, place.lon, viewAt?.toISOString());
       if (request !== cityRequest) return; // 別の都市を選んだり、地点へ戻ったりしていたら捨てる
@@ -278,6 +284,8 @@ async function init(): Promise<void> {
     } catch (err) {
       console.error('city weather failed', place.name, err);
       if (request === cityRequest) setStatus(status, `${place.name}の天気を取得できませんでした`, true);
+    } finally {
+      done();
     }
   }
 

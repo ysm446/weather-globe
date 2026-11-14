@@ -1862,6 +1862,55 @@ body.hide-tour-panel #tour-panel {
   white-space: nowrap;
 }
 
+/* 取得中の知らせ。一つずつ、左にくるくる回る印を付けて縦に並べる */
+#loading-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+#loading-status[hidden] {
+  display: none;
+}
+
+.loading-item {
+  padding: 4px 12px;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+  background: var(--panel);
+  border-radius: 8px;
+  box-shadow: var(--panel-glow);
+  backdrop-filter: var(--glass);
+}
+
+.loading-item::before,
+#view-status.loading::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  vertical-align: -1px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: loading-spin 0.9s linear infinite;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
 #layer-info {
   width: 280px;
   padding: 10px 12px;
@@ -2622,6 +2671,12 @@ body.panels-right #forecasts {
 @media (prefers-reduced-motion: reduce) {
   .marker-dot::after {
     animation: none;
+  }
+
+  /* 回さず、ゆっくり明滅させる */
+  .loading-item::before,
+  #view-status.loading::before {
+    animation: loading-pulse 1.6s ease-in-out infinite;
   }
 }
 

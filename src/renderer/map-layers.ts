@@ -1,5 +1,6 @@
 // 天気と風速のモードのデータの取得と、凡例の表示。データは、そのモードに入ったときに初めて取得する
 import { el, formatDateTime } from './dom';
+import { loadingStatus } from './loading-status';
 import type { GlobeController } from './globe-view';
 import { makeSyntheticWind, WindField } from './wind';
 import { RAMP_MAX_SPEED, WIND_COLOR_STOPS } from './wind-texture';
@@ -87,6 +88,7 @@ export function initMapLayers(globe: Pick<GlobeController, 'setClouds' | 'setWin
     load: (at: Date | null, isCurrent: () => boolean) => Promise<LayerCaption | null>;
   }
   const newLayer = (load: Layer['load']): Layer => ({ caption: null, loadedAt: 0, loadedKey: null, pendingKey: null, request: 0, load });
+  const LAYER_NAMES: Record<DataMode, string> = { weather: '雲', wind: '風' };
   const layers: Record<DataMode, Layer> = {
     weather: newLayer((at, isCurrent) => loadClouds(globe.setClouds, at, isCurrent)),
     wind: newLayer((at, isCurrent) => loadWind(globe.setWind, at, isCurrent)),
@@ -94,7 +96,7 @@ export function initMapLayers(globe: Pick<GlobeController, 'setClouds' | 'setWin
   let mode: MapMode = 'normal';
   let viewAt: Date | null = null;
 
-  // 出典と時刻は設定画面の「情報」に出す。画面の下には、風速の凡例と、取得中や取得できないときの知らせだけを出す
+  // 出典と時刻は設定画面の「情報」に出す。画面の下には、風速の凡例と、取得できないときの知らせだけを出す
   function renderLayerInfo(): void {
     for (const [target, id] of [['weather', 'credit-clouds'], ['wind', 'credit-wind']] as const) {
       const caption = layers[target].caption;
@@ -102,7 +104,8 @@ export function initMapLayers(globe: Pick<GlobeController, 'setClouds' | 'setWin
     }
     const info = el('layer-info');
     const caption = mode === 'normal' ? null : layers[mode].caption;
-    const notice = mode !== 'normal' && (!caption || caption.warn);
+    // 取得中の知らせは下の中央の別の箱 (loading-status.ts) に出す
+    const notice = mode !== 'normal' && caption !== null && caption.warn;
     // 雲は見ればわかるので凡例を出さない。知らせもなければ箱ごと出さない
     info.hidden = mode === 'normal' || (mode === 'weather' && !notice);
     if (info.hidden) return;
@@ -111,7 +114,7 @@ export function initMapLayers(globe: Pick<GlobeController, 'setClouds' | 'setWin
     el('legend-max').textContent = String(RAMP_MAX_SPEED);
     const source = el('layer-source');
     source.hidden = !notice;
-    source.textContent = caption?.text ?? 'データを取得しています…';
+    source.textContent = caption?.text ?? '';
     source.className = caption?.warn ? 'warn' : '';
   }
 
@@ -128,7 +131,11 @@ export function initMapLayers(globe: Pick<GlobeController, 'setClouds' | 'setWin
       layer.caption = null;
       renderLayerInfo();
     }
-    const caption = await layer.load(viewAt, () => request === layer.request);
+    // 過去の時刻を見ているときは、待っている理由が分かるよう時刻も添える
+    const text = viewAt
+      ? `${formatDateTime(viewAt)}の${LAYER_NAMES[target]}を取得しています…`
+      : `${LAYER_NAMES[target]}の情報を取得しています…`;
+    const caption = await loadingStatus().track(text, layer.load(viewAt, () => request === layer.request));
     if (request !== layer.request) return;
     layer.pendingKey = null;
     layer.caption = caption;

@@ -180,13 +180,15 @@
     </div>
     </div>
 
-    <!-- 下の中央。地域ビューの高解像度の画像の読み込み状況と、風速の凡例、データを取得できないときの知らせ。
+    <!-- 下の中央。地域ビューの高解像度の画像の読み込み状況、取得中の知らせ、風速の凡例、データを取得できないときの知らせ。
          データの出典と時刻は設定画面の「情報」に出す -->
     <!-- ツアーの字幕。下の段 (操作のボタン、読み込み状況) より上に出す -->
     <div id="tour-caption" role="status"></div>
     <div id="bottom-center">
       <div id="bookmark-status" role="status" hidden></div>
       <div id="view-status" role="status" hidden></div>
+      <!-- 天気、雲、風の取得中の知らせ (loading-status.ts) -->
+      <div id="loading-status" role="status" hidden></div>
       <div id="layer-info" hidden>
         <div class="legend-bar" id="legend-bar"></div>
         <div class="legend-scale"><span>0</span><span>風速 m/s</span><span id="legend-max"></span></div>
