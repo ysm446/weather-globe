@@ -1,11 +1,11 @@
 // デモの進行と、始める、終わるの操作。場面の順番と行き先は demo.ts で決める
-import { DEMO_SCENES, pickDemoPlace, type DemoPlace } from './demo';
+import { DEMO_SCENES, demoArrival, demoCruiseStart, pickDemoPlace, type DemoPlace } from './demo';
 import { el } from './dom';
 import type { GlobeController } from './globe-view';
 
 const DEMO_HINT_MS = 4000;
 
-// 地球の回転と地域ビューを順に見せる。操作すると終わり、元のモードと視点へ戻す
+// 地球の回転、都市のまわりの旋回、昼と夜の境目を越える巡航を順に見せる。操作すると終わり、元のモードと視点へ戻す
 export function initDemo(
   globe: GlobeController,
   modes: { get(): MapMode; apply(mode: MapMode): void },
@@ -60,13 +60,18 @@ export function initDemo(
     if (scene.view === 'globe') {
       showHomeWeather();
       globe.demoGlobe(scene.dayside);
+    } else if (scene.cruise) {
+      // 巡航の間は対応する都市がないので、設定地点の天気に戻す
+      showHomeWeather();
+      globe.demoCruise(demoCruiseStart(scene.cruise, globe.sunLonLat(), globe.demoCenter()), scene.seconds);
     } else if (scene.place === 'home' && weather.hasHome()) {
       showHomeWeather();
       globe.demoRegion();
     } else {
       const kind = scene.place === 'home' || !scene.place ? 'city' : scene.place;
-      const place = pickDemoPlace(kind, globe.sunLonLat(), recent);
-      globe.demoRegion(place);
+      const from = globe.demoCenter();
+      const place = pickDemoPlace(kind, globe.sunLonLat(), recent, Math.random, from ?? undefined);
+      globe.demoRegion(place, demoArrival(from, place));
       globe.setMarker(place);
       showCity(place);
     }
