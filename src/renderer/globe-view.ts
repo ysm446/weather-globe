@@ -125,6 +125,7 @@ const MARKER_BOX_LEFT = 8;
 const MARKER_BOX_HEIGHT = 24;
 const MARKER_LABEL_OFFSET = 13;
 const DEMO_ROTATE_SPEED = 0.42; // OrbitControls の単位。毎秒約 2.5 度で、地表は実際の自転と同じ東向きに動く
+const DEMO_GLOBE_DEGREES_PER_SECOND = 2.5; // 上の速さを度で表したもの
 const DEMO_TURN_DEGREES_PER_SECOND = 1.2; // 地域ビューで中心のまわりを回る速さ
 // 地域ビューの巡航。操作は設定で選ぶ。アナログ式は W を押している間は速くなり、S を押している間は遅くなって 0 で止まる。
 // 段階式は W/S を 1 回押すごとに 1 段変える。どちらも手を離すとその速さで飛び続ける。A/D を押している間は旋回する
@@ -193,6 +194,14 @@ const CITY_HOP_KEYS: Record<string, HopDirection> = {
 };
 const DEMO_TILT = 62;
 const DEMO_DISTANCE = 0.22;
+// デモの巡航。ISS のように低い高さから地平線を入れて見る (高さは約 500km)。
+// 実際の速さ (約 7.7 km/秒) では場面の間にほとんど進まないので、10 倍あまりの速さで飛ぶ
+const DEMO_CRUISE_TILT = 70;
+const DEMO_CRUISE_DISTANCE = 0.2;
+// 地球の中心から見た角度。約 133 km/秒 (ISS の約 17 倍)
+const DEMO_CRUISE_DEGREES_PER_SECOND = 1.2;
+const DEMO_CRUISE_RAMP_SECONDS = 3; // 飛び始めと終わりに速さをならす時間
+const DEMO_CRUISE_TURN_SECONDS = 5; // 巡航の前に、その場で次の都市へ向き直って低い姿勢になる時間
 const DEMO_DAYSIDE_OFFSET = 30; // 太陽の真下より東から始め、回転で真下を通る
 const REGION_RELEASE_BLEND = 0.01; // 地球ビューへ戻って、高解像度の画像が見えなくなったら解放する
 // 地球ビューで寄ったときも高解像度の画像を使う。カメラの高さ (レンズの分を換算、地球の半径が 1) で決める。
@@ -602,6 +611,8 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     lift?: number;
   } | null = null;
   let demoMotion = false;
+  // デモの巡航。向き直ってから seconds の間、今の向きへまっすぐ進み、次の都市に着く。null の間は中心のまわりを回る
+  let demoCruise: { elapsed: number; seconds: number } | null = null;
   let regionPending: RegionDelta = REGION_STILL; // ドラッグで動かしたうち、まだカメラに反映していない分
   let regionDistanceGoal = REGION_DISTANCE;
   let globeZoomGoal: number | null = null; // 地球ビューでホイールで決めた、地球の中心からの距離。近づき終えたら null
@@ -634,6 +645,18 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     regionFlight = { from: regionView, to, elapsed: 0, seconds, leaving, spin: 0, tiltShift: 0 };
     regionPending = REGION_STILL;
     regionDrag = null;
+  }
+
+  // デモで次の場所へ移る。地域ビューの中で移るときは、保存した視点へ飛ぶときと同じく、
+  // 離れているほど途中で高く上がり、時間も長くかける。かかる秒数を返す
+  function demoFly(to: RegionView): number {
+    const hop = !!regionView && !regionFlight?.leaving;
+    const separation = separationDegrees(beginRegion(), to);
+    const seconds = DEMO_FLY_SECONDS * (hop ? 1 + separation / 180 : 1);
+    demoCruise = null;
+    flyRegion(to, false, seconds);
+    if (regionFlight && hop) regionFlight.lift = bookmarkLift(separation);
+    return seconds;
   }
 
   function homeLonLat(fallback: LonLat): LonLat {
@@ -1320,9 +1343,17 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
       regionView = updateArmKeys(regionView, dt);
       regionView = clampRegionView({
         ...regionView,
-        heading: regionView.heading + (demoMotion ? DEMO_TURN_DEGREES_PER_SECOND * dt : 0),
+        heading: regionView.heading + (demoMotion && !demoCruise ? DEMO_TURN_DEGREES_PER_SECOND * dt : 0),
         distance: approachDistance(regionView.distance, regionDistanceGoal, dt),
       });
+      if (demoMotion && demoCruise) {
+        // 始めと終わりは速さをならす。着いたら、中心のまわりの旋回に移る
+        demoCruise.elapsed += dt;
+        const edge = Math.min(demoCruise.elapsed, demoCruise.seconds - demoCruise.elapsed) / DEMO_CRUISE_RAMP_SECONDS;
+        const speed = DEMO_CRUISE_DEGREES_PER_SECOND * THREE.MathUtils.smoothstep(edge, 0, 1);
+        regionView = cruiseRegionView(regionView, speed * THREE.MathUtils.DEG2RAD * dt, 0);
+        if (demoCruise.elapsed >= demoCruise.seconds) demoCruise = null;
+      }
       updateCruise(dt);
     }
     applyRegionPose(regionView);
@@ -2218,6 +2249,7 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
     sunLonLat,
     setDemoMotion(on: boolean): void {
       demoMotion = on;
+      demoCruise = null;
       if (on) stopCruise();
       syncCityLabels();
       controls.autoRotate = on;
@@ -2245,28 +2277,65 @@ export function initGlobe(onSelectCity: (place: DemoPlace) => void, onViewChange
       }
       flyTo(markerPos.clone().normalize().multiplyScalar(camera.position.length()));
     },
-    // place を省くと設定地点へ向かう
-    demoRegion(place?: LonLat): void {
-      if (mode === 'wind') return;
-      if (solar.active) {
-        exitSolar(() => this.demoRegion(place));
-        return;
-      }
-      const from = beginRegion();
-      const { lat, lon } = place ?? homeLonLat(from);
-      flyRegion({ lat, lon, heading: 0, tilt: DEMO_TILT, distance: DEMO_DISTANCE }, false, DEMO_FLY_SECONDS);
+    // デモで今いる地域ビューの中心。地球ビューにいるときは null
+    demoCenter(): LonLat | null {
+      return regionView && !regionFlight?.leaving ? { lat: regionView.lat, lon: regionView.lon } : null;
     },
-    // 風速モードへの切り替えで既に離れ始めていたら、その動きに任せる
-    demoGlobe(dayside = false): void {
+    // place を省くと設定地点へ向かう。pose は着いたときの方角、傾き、距離。かかる秒数を返す
+    demoRegion(
+      place?: LonLat,
+      pose: { heading: number; tilt: number; distance: number } = { heading: 0, tilt: DEMO_TILT, distance: DEMO_DISTANCE },
+    ): number {
+      if (mode === 'wind') return 0;
       if (solar.active) {
-        exitSolar(() => this.demoGlobe(dayside));
-        return;
+        exitSolar(() => this.demoRegion(place, pose));
+        return DEMO_FLY_SECONDS;
       }
-      if (!regionView || regionFlight?.leaving) return;
+      const { lat, lon } = place ?? homeLonLat(beginRegion());
+      return demoFly(clampRegionView({ lat, lon, ...pose }));
+    },
+    // 今いる所で place へ向き直って低い姿勢になり、大円に沿ってまっすぐ飛んで place に着く。着いたら旋回に移る。
+    // かかる秒数を返す。地域ビューにいないときは、ふつうに降りる
+    demoCruise(place: LonLat): number {
+      if (mode === 'wind' || solar.active) return 0;
+      if (!regionView || regionFlight?.leaving) {
+        return demoFly(clampRegionView({ ...place, heading: 0, tilt: DEMO_CRUISE_TILT, distance: DEMO_CRUISE_DISTANCE }));
+      }
+      const heading = bearingDegrees(regionView, place);
+      flyRegion(
+        { lat: regionView.lat, lon: regionView.lon, heading, tilt: DEMO_CRUISE_TILT, distance: DEMO_CRUISE_DISTANCE },
+        false,
+        DEMO_CRUISE_TURN_SECONDS,
+      );
+      // 速さをならす間は半分の速さで進むのと同じなので、その分だけ長くかかる
+      const seconds = separationDegrees(regionView, place) / DEMO_CRUISE_DEGREES_PER_SECOND + DEMO_CRUISE_RAMP_SECONDS;
+      demoCruise = { elapsed: 0, seconds };
+      return DEMO_CRUISE_TURN_SECONDS + seconds;
+    },
+    // 地球の全景まで引く。over は引きながら移る先で、'dayside' なら昼側 (雲や海の反射が見える)、
+    // 地点なら、引いたあとの地球の回転でその地点が正面へ来るよう、少し東へ移る (離れているほど時間をかける)。
+    // 省くと今の場所の真上へ引く。かかる秒数を返す。
+    // 風速モードへの切り替えで既に離れ始めていたら、その動きに任せる
+    demoGlobe(over?: LonLat | 'dayside', hold = 0): number {
+      if (solar.active) {
+        exitSolar(() => this.demoGlobe(over, hold));
+        return DEMO_FLY_SECONDS;
+      }
+      if (!regionView || regionFlight?.leaving) return 0;
+      demoCruise = null;
       const distance = viewDistance(mode) - GLOBE_RADIUS;
       const sun = sunLonLat();
-      const place = dayside ? { lat: sun.lat, lon: sun.lon + DEMO_DAYSIDE_OFFSET } : regionView;
-      flyRegion({ ...regionView, ...place, heading: 0, tilt: 0, distance }, true, DEMO_FLY_SECONDS);
+      let place: LonLat = regionView;
+      let seconds = DEMO_FLY_SECONDS;
+      if (over === 'dayside') {
+        place = { lat: sun.lat, lon: sun.lon + DEMO_DAYSIDE_OFFSET };
+      } else if (over) {
+        // 全景では地表が東へ動く (中心の経度が毎秒 DEMO_GLOBE_DEGREES_PER_SECOND 度ずつ西へ移る)
+        place = { lat: over.lat, lon: over.lon + DEMO_GLOBE_DEGREES_PER_SECOND * hold };
+        seconds *= 1 + separationDegrees(regionView, place) / 180;
+      }
+      flyRegion({ ...regionView, lat: place.lat, lon: place.lon, heading: 0, tilt: 0, distance }, true, seconds);
+      return seconds;
     },
   };
 }

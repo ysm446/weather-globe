@@ -1,31 +1,19 @@
-// デモの場面の順番と行き先。画面の計算から切り離して検証できるよう、DOM に依存しない
-import { separationDegrees, type LonLat } from './math.ts';
+// デモの都市と、着いたときのカメラ。画面の計算から切り離して検証できるよう、DOM に依存しない。
+// 次の都市と移り方は demo-leg.ts で選ぶ (cities.ts がこのファイルを読むので、分けている)
+import { DEG, separationDegrees, wrapDegrees, type LonLat } from './math.ts';
 
 export interface DemoPlace extends LonLat {
   name: string;
 }
 
-export interface DemoScene {
-  mode: MapMode;
-  view: GlobeView;
-  place?: 'home' | DemoPlaceKind;
-  dayside?: boolean; // 雲や海の反射が見えるよう、地域ビューから昼側へ移って回る
-  seconds: number;
-}
-
-export type DemoPlaceKind = 'day' | 'night' | 'city';
-
-// 今の様子を見せたいので、すべての場面で雲を出す
-export const DEMO_SCENES: DemoScene[] = [
-  { mode: 'weather', view: 'globe', seconds: 20 },
-  { mode: 'weather', view: 'region', place: 'home', seconds: 20 },
-  { mode: 'weather', view: 'globe', dayside: true, seconds: 15 },
-  { mode: 'weather', view: 'region', place: 'day', seconds: 20 },
-  { mode: 'weather', view: 'globe', dayside: true, seconds: 15 },
-  { mode: 'weather', view: 'region', place: 'night', seconds: 20 },
-  { mode: 'weather', view: 'globe', dayside: true, seconds: 15 },
-  { mode: 'weather', view: 'region', place: 'city', seconds: 20 },
-];
+// デモは、始めに地球の全景と設定地点を見せ、そのあと都市から都市へ移る区間を繰り返す。
+// 今の様子を見せたいので、ずっと天気モード (雲を出す) にする
+export const DEMO_MODE: MapMode = 'weather';
+export const DEMO_GLOBE_SECONDS = 20; // 始めの地球の全景 (昼側)
+export const DEMO_HOME_SECONDS = 20; // 設定地点へ降りて旋回する時間 (降りる時間を含む)
+export const DEMO_STAY_SECONDS = 15; // 都市に着いてから旋回する時間
+export const DEMO_GLOBE_HOLD_SECONDS = 6; // 地球まで引く区間で、全景のまま地球が回るのを見せる時間
+export const DEMO_LEGS_PER_LOOP = 6; // この数の区間を巡ったら、始めの全景と設定地点へ戻る
 
 // 世界の都市。デモの行き先と、地球儀のラベルに使う。ラベルが重なるときは前の都市を優先する
 export const CITIES: DemoPlace[] = [
@@ -62,30 +50,23 @@ export const CITIES: DemoPlace[] = [
   { name: 'ホノルル', lat: 21.3, lon: -157.9 },
 ];
 
-const DAY_MIN_ELEVATION = 15; // 太陽がこれより高ければ、地表がよく見える
-const NIGHT_MAX_ELEVATION = -6; // 太陽がこれより低ければ、街明かりがはっきり見える
-const RECENT_LIMIT = 5; // 同じ場所が続かないよう、最近行った場所を避ける
-
 export function sunElevation(place: LonLat, sun: LonLat): number {
   return 90 - separationDegrees(place, sun);
 }
 
-// 昼や夜の都市は、今の太陽で見頃の都市からランダムに選ぶ。recent は新しい順で、選んだ場所を先頭に足す
-export function pickDemoPlace(
-  kind: DemoPlaceKind,
-  sun: LonLat,
-  recent: string[],
+// 都市に着いたときのカメラ。from (今いる場所) から移るときは、進んできた向きのまま着く。
+// 飛行は緯度と経度をそれぞれ補間するので、進む向きは着く地点での緯度と経度の差から求める。
+// 傾きと距離は場面ごとに少し変える
+export function demoArrival(
+  from: LonLat | null,
+  to: LonLat,
   random: () => number = Math.random,
-): DemoPlace {
-  const suitable = CITIES.filter((place) => {
-    if (kind === 'day') return sunElevation(place, sun) >= DAY_MIN_ELEVATION;
-    return kind === 'city' || sunElevation(place, sun) <= NIGHT_MAX_ELEVATION;
-  });
-  const candidates = suitable.length > 0 ? suitable : CITIES;
-  const fresh = candidates.filter((place) => !recent.includes(place.name));
-  const pool = fresh.length > 0 ? fresh : candidates;
-  const place = pool[Math.floor(random() * pool.length)];
-  recent.unshift(place.name);
-  recent.length = Math.min(recent.length, RECENT_LIMIT);
-  return place;
+): { heading: number; tilt: number; distance: number } {
+  const east = from ? wrapDegrees(to.lon - from.lon) * Math.cos(to.lat * DEG) : 0;
+  const north = from ? to.lat - from.lat : 1;
+  return {
+    heading: wrapDegrees(Math.atan2(east, north) / DEG),
+    tilt: 56 + 10 * random(),
+    distance: 0.19 + 0.06 * random(),
+  };
 }

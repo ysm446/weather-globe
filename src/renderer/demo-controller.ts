@@ -1,11 +1,22 @@
-// デモの進行と、始める、終わるの操作。場面の順番と行き先は demo.ts で決める
-import { DEMO_SCENES, pickDemoPlace, type DemoPlace } from './demo';
+// デモの進行と、始める、終わるの操作。都市と着いたときのカメラは demo.ts、次の都市と移り方は demo-leg.ts で決める
+import {
+  DEMO_GLOBE_HOLD_SECONDS,
+  DEMO_GLOBE_SECONDS,
+  DEMO_HOME_SECONDS,
+  DEMO_LEGS_PER_LOOP,
+  DEMO_MODE,
+  DEMO_STAY_SECONDS,
+  demoArrival,
+  type DemoPlace,
+} from './demo';
+import { pickDemoLeg, type DemoWay } from './demo-leg';
 import { el } from './dom';
 import type { GlobeController } from './globe-view';
 
 const DEMO_HINT_MS = 4000;
 
-// 地球の回転と地域ビューを順に見せる。操作すると終わり、元のモードと視点へ戻す
+// 地球の全景と設定地点を見せたあと、都市から都市へ、弧、低い高さの巡航、全景まで引く、のどれかで移っては旋回する。
+// 操作すると終わり、元のモードと視点へ戻す
 export function initDemo(
   globe: GlobeController,
   modes: { get(): MapMode; apply(mode: MapMode): void },
@@ -18,7 +29,10 @@ export function initDemo(
   let restore: { mode: MapMode; view: GlobeView } | null = null;
   let timer = 0;
   let hintTimer = 0;
-  let step = 0;
+  // 次に行う動き。それぞれ、次の動きまで待つ秒数を返す。空になったら次の区間 (か始めの全景) を足す
+  let steps: (() => number)[] = [];
+  let legs = 0; // 始めてから足した区間の数 (始めの全景も 1 つと数える)
+  let lastWay: DemoWay | null = null;
   let stoppedByStartButton = false;
   let cityRequest = 0;
   const recent: string[] = [];
@@ -52,25 +66,68 @@ export function initDemo(
     showCaption('');
   }
 
-  function runScene(): void {
-    const scene = DEMO_SCENES[step % DEMO_SCENES.length];
-    step++;
-    modes.apply(scene.mode);
-    views.show(scene.view);
-    if (scene.view === 'globe') {
+  function show(view: GlobeView): void {
+    modes.apply(DEMO_MODE);
+    views.show(view);
+  }
+
+  // 始めの全景 (昼側) と設定地点。設定地点がなければ全景だけで、続く区間で都市へ降りる
+  function opening(): (() => number)[] {
+    const globeScene = (): number => {
+      show('globe');
       showHomeWeather();
-      globe.demoGlobe(scene.dayside);
-    } else if (scene.place === 'home' && weather.hasHome()) {
+      globe.demoGlobe('dayside');
+      return DEMO_GLOBE_SECONDS;
+    };
+    const homeScene = (): number => {
+      show('region');
       showHomeWeather();
       globe.demoRegion();
-    } else {
-      const kind = scene.place === 'home' || !scene.place ? 'city' : scene.place;
-      const place = pickDemoPlace(kind, globe.sunLonLat(), recent);
-      globe.demoRegion(place);
+      return DEMO_HOME_SECONDS;
+    };
+    return weather.hasHome() ? [globeScene, homeScene] : [globeScene];
+  }
+
+  // 次の都市へ移って旋回する。左上のパネルは、移り始めたときから行き先の都市の天気にする
+  function leg(): (() => number)[] {
+    const from = globe.demoCenter();
+    const { place, way } = pickDemoLeg(from, globe.sunLonLat(), recent, lastWay);
+    lastWay = way;
+    const head = (): void => {
       globe.setMarker(place);
       showCity(place);
+    };
+    if (way === 'globe') {
+      return [
+        () => {
+          show('globe');
+          head();
+          return globe.demoGlobe(place, DEMO_GLOBE_HOLD_SECONDS) + DEMO_GLOBE_HOLD_SECONDS;
+        },
+        () => {
+          show('region');
+          return globe.demoRegion(place, demoArrival(null, place)) + DEMO_STAY_SECONDS;
+        },
+      ];
     }
-    timer = window.setTimeout(runScene, scene.seconds * 1000 * window.__weatherGlobeDebug.demoTimeScale);
+    return [
+      () => {
+        show('region');
+        head();
+        const seconds = way === 'cruise' ? globe.demoCruise(place) : globe.demoRegion(place, demoArrival(from, place));
+        return seconds + DEMO_STAY_SECONDS;
+      },
+    ];
+  }
+
+  function runStep(): void {
+    if (steps.length === 0) {
+      if (legs % (DEMO_LEGS_PER_LOOP + 1) === 0) steps = opening();
+      else steps = leg();
+      legs++;
+    }
+    const seconds = steps.shift()!();
+    timer = window.setTimeout(runStep, seconds * 1000 * window.__weatherGlobeDebug.demoTimeScale);
   }
 
   function wake(): void {
@@ -136,7 +193,9 @@ export function initDemo(
     if (restore) return;
     weather.backToNow();
     restore = { mode: modes.get(), view: views.get() };
-    step = 0;
+    steps = [];
+    legs = 0;
+    lastWay = null;
     start.blur();
     start.setAttribute('aria-pressed', 'true');
     start.setAttribute('aria-label', 'デモを停止');
@@ -148,6 +207,6 @@ export function initDemo(
     window.addEventListener('keydown', onInput, true);
     window.addEventListener('mousemove', wake);
     wake();
-    runScene();
+    runStep();
   });
 }
